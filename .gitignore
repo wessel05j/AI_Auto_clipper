@@ -1,0 +1,9 @@
+# Ignore raw video assets
+videos/
+programs/__pycache__/
+output/
+system/
+# (Optional) Uncomment more rules if desired
+# output/
+# system/*.json
+# __pycache__/
