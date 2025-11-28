@@ -2,7 +2,9 @@
 videos/
 programs/__pycache__/
 output/
-system/
+system/transcribed.json
+system/AI.json
+system/Clips.json
 # (Optional) Uncomment more rules if desired
 # output/
 # system/*.json

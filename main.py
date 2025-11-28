@@ -29,7 +29,7 @@ max_token = 10000 #Max tokens per chunk for AI processing
 youtube_list = []
 
 
-#Checking variables to be correct:
+#Checking variables to be correct (To be updated):
 checked = variable_checker(user_query, base_url, model, clips_input, clips_output, transcribing_model, max_token)
 if len(checked) > 0:
     print(f"Some variables were not declared. Please fix: {checked}")
