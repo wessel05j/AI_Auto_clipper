@@ -1,9 +1,12 @@
 {
-    "MaxTokens": 0,
-    "Output_folder": "",
-    "Input_folder": "",
-    "Base_url": "",
-    "transcribing_model": "",
-    "User_query": "",
-    "Youtube_list": ""
+    "setup_variables": {
+        "max_tokens": 0,
+        "output_folder": "",
+        "input_folder": "",
+        "base_url": "",
+        "transcribing_model": "",
+        "accuracy_model": "",
+        "user_query": "",
+        "youtube_list": []
+    }
 }

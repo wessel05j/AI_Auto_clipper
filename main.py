@@ -1,14 +1,20 @@
 import os
 import json
 
+#Core files
+from programs.variable_checker import variable_checker
+from programs.scan_videos import scan_videos
+from programs.yt_downloader import yt_downloader
 from programs.transcribing import transcribe_video
-from programs.ai_scanning import ai_clipping
 from programs.chunking import chunking
+from programs.ai_scanning import ai_clipping
 from programs.merge_segments import merge_segments
 from programs.extract_clip import extract_clip
-from programs.scan_videos import scan_videos
-from programs.variable_checker import variable_checker
-from programs.yt_downloader import yt_downloader
+
+#UI cleanup files
+from programs.interact_w_json import interact_w_json
+from programs.file_exists import file_exists
+
 
 #Variables needed:
 user_query = '''
@@ -16,21 +22,18 @@ user_query = '''
     Only select segments where the speaker is directly addressing the audience in an uplifting, encouraging, or inspiring way. 
     You may also include interesting or insightful moments, but motivation and audience-directed uplift must be the priority.
 '''
-
 base_url = "http://127.0.0.1:1234/v1"
 model = "openai/gpt-oss-20b"
 clips_input = "videos/"
 clips_output = "output/"
 transcribing_model = "small" #tiny, base, small, medium, large, large-v3, large-v3-turbo
+accuracy_model = "tiny" #Preferrably small but the bigger the better accuracy 
 max_token = 10000 #Max tokens per chunk for AI processing
-
-
-#optional youtube downloading:
-youtube_list = []
+youtube_list = [] #optional youtube downloading:
 
 
 #Checking variables to be correct (To be updated):
-checked = variable_checker(user_query, base_url, model, clips_input, clips_output, transcribing_model, max_token)
+checked = variable_checker(user_query, base_url, model, clips_input, clips_output, transcribing_model, accuracy_model, max_token, youtube_list)
 if len(checked) > 0:
     print(f"Some variables were not declared. Please fix: {checked}")
     run = False
@@ -47,21 +50,20 @@ while run:
     #Collection all videos for clipping:
     print("Collection videos...")
     iterated = 0
-    print("System is 0% finished")
+    print(f"System is 0% finished")
     for video in videos: 
         videos_update = scan_videos(clips_input)
         print(f"Videos left: {videos_update}")
         print("AI_clipper: ", video)
         #Transcribing:
-        if os.path.exists("system/transcribed.json") and os.path.getsize("system/transcribed.json") > 0:
+        if file_exists("system/transcribed.json"):
             print("Already transcribed...")
-            with open("system/transcribed.json", "r") as f:
-                transcribed_text = json.load(f)
+            transcribed_text = interact_w_json("system/transcribed.json", "r", None)
+            
         else:
             print("Transcribing...")
             transcribed_text = transcribe_video(video, transcribing_model)
-            with open("system/transcribed.json", "w") as f:
-                json.dump(transcribed_text, f)
+            interact_w_json("system/transcribed.json", "w", transcribed_text)
 
         #Chunking
         print("Chunking...")
@@ -69,10 +71,9 @@ while run:
         print(f"Chunks created: {len(chunked_transcribed_text)}")
 
         #AI choosen clips:
-        if os.path.exists("system/AI.json") and os.path.getsize("system/AI.json") > 0:
+        if file_exists("system/AI.json"):
             print("Already done AI scanning...")
-            with open("system/AI.json", "r") as f:
-                AI_output = json.load(f)
+            AI_output = interact_w_json("system/AI.json", "r", None)
         else:
             print("Scanning with AI...")
             AI_output = []
@@ -80,8 +81,7 @@ while run:
                 output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text)
                 # Append a fresh copy to avoid any unintended shared mutations
                 AI_output.append(output)
-            with open("system/AI.json", "w") as f:
-                json.dump(AI_output, f)
+            interact_w_json("system/AI.json", "w", AI_output)
 
         #Segment Cleanup
         print("Finding AI scanning in transcribed text...")
@@ -90,21 +90,39 @@ while run:
 
         #Video clipping
         print(f"Clips left: {len(list_of_clips)}")
-        if os.path.exists("system/Clips.json") and os.path.getsize("system/Clips.json") > 0:
+        if file_exists("system/Clips.json"):
             print(f"Continuing Clipping...")
-            with open("system/Clips.json", "r") as f:
-                list_of_clips = json.load(f)
+            list_of_clips = interact_w_json("system/Clips.json", "r", None)
 
         else:
             print("Starting Clipping...")
             
         for clip in list_of_clips[:]:
             print(f"Clips left: {len(list_of_clips)}")
-            extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
+            filename = extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
+
+            #Testing Accuracy (make this into a function later):
+            print("Testing clip accuracy...")
+            transcribed_text = transcribe_video(filename, accuracy_model)
+            last_segment = transcribed_text[-1]
+            example = "Because. "
+            if len(last_segment[2]) == len(example) or len(last_segment[2]) < len(example):
+                print("Clip inaccurate, removing last segment and re-making clip...")
+                #Remove the last segment and make the clip again
+                transcribed_text.remove(last_segment)
+
+                #Removing the current clip
+                os.remove(filename)
+                new_end = last_segment[0]
+                new_clip = [clip[0], new_end]
+                filtered_clip = extract_clip(new_clip, video, clips_output, clips_input, len(list_of_clips))
+            else:
+                print("Clip accurate!")
+            
             list_of_clips.remove(clip)
-            with open("system/Clips.json", "w") as f:
-                json.dump(list_of_clips, f)
-                
+            interact_w_json("system/Clips.json", "w", list_of_clips)
+        
+
 
         #System updating
         iterated += 1
