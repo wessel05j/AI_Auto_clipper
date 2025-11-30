@@ -27,9 +27,11 @@ model = "openai/gpt-oss-20b"
 clips_input = "videos/"
 clips_output = "output/"
 transcribing_model = "small" #tiny, base, small, medium, large, large-v3, large-v3-turbo
-accuracy_model = "tiny" #Preferrably small but the bigger the better accuracy 
+accuracy_testing = False #If true, will re-transcribe the clip at the end to check for accuracy
+accuracy_model = "medium" #Preferrably large, takes time but the bigger the better chance for accuracy in the clips removing any clutter outside choosen clip... 
 max_token = 10000 #Max tokens per chunk for AI processing
 youtube_list = [] #optional youtube downloading:
+
 
 
 #Checking variables to be correct (To be updated):
@@ -101,26 +103,34 @@ while run:
             print(f"Clips left: {len(list_of_clips)}")
             filename = extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
 
-            #Testing Accuracy (make this into a function later):
-            print("Testing clip accuracy...")
-            transcribed_text = transcribe_video(filename, accuracy_model)
-            last_segment = transcribed_text[-1]
-            example = "Because. "
-            if len(last_segment[2]) == len(example) or len(last_segment[2]) < len(example):
-                print("Clip inaccurate, removing last segment and re-making clip...")
-                #Remove the last segment and make the clip again
-                transcribed_text.remove(last_segment)
-
-                #Removing the current clip
-                os.remove(filename)
-                new_end = last_segment[0]
-                new_clip = [clip[0], new_end]
-                filtered_clip = extract_clip(new_clip, video, clips_output, clips_input, len(list_of_clips))
+            #Testing Accuracy:
+            if accuracy_testing == False:
+                print("Skipping clip accuracy testing...")
+                list_of_clips.remove(clip)
+                interact_w_json("system/Clips.json", "w", list_of_clips)
             else:
-                print("Clip accurate!")
+                print("Testing clip accuracy...")
+                if file_exists("system/accuracy_transcribed.json") == False:
+                    transcribed_text = transcribe_video(filename, accuracy_model)
+                    interact_w_json("system/accuracy_transcribed.json", "w", transcribed_text)
+                else:
+                    transcribed_text = interact_w_json("system/accuracy_transcribed.json", "r", None)
+
+                last_segment = transcribed_text[-1]
+                example = "Yeah Because. "
+                if len(last_segment[2]) == len(example) or len(last_segment[2]) < len(example):
+                    print("Clip inaccurate, removing last segment and re-making clip...")
+                    #Remove the last segment and make the clip again
+                    transcribed_text.remove(last_segment)
+
+                    #Removing the current clip
+                    os.remove(filename)
+                    new_end = last_segment[0]
+                    new_clip = [clip[0], new_end]
+                    filtered_clip = extract_clip(new_clip, video, clips_output, clips_input, len(list_of_clips))
+                    list_of_clips.remove(new_clip)
+                    interact_w_json("system/Clips.json", "w", list_of_clips)
             
-            list_of_clips.remove(clip)
-            interact_w_json("system/Clips.json", "w", list_of_clips)
         
 
 
