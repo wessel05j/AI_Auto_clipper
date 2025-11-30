@@ -2,18 +2,18 @@ import os
 import json
 
 #Core files
-from programs.variable_checker import variable_checker
-from programs.scan_videos import scan_videos
-from programs.yt_downloader import yt_downloader
-from programs.transcribing import transcribe_video
-from programs.chunking import chunking
-from programs.ai_scanning import ai_clipping
-from programs.merge_segments import merge_segments
-from programs.extract_clip import extract_clip
+from programs.core_functionality.variable_checker import variable_checker
+from programs.core_functionality.scan_videos import scan_videos
+from programs.core_functionality.yt_downloader import yt_downloader
+from programs.core_functionality.transcribing import transcribe_video
+from programs.core_functionality.chunking import chunking
+from programs.core_functionality.ai_scanning import ai_clipping
+from programs.core_functionality.merge_segments import merge_segments
+from programs.core_functionality.extract_clip import extract_clip
 
 #UI cleanup files
-from programs.interact_w_json import interact_w_json
-from programs.file_exists import file_exists
+from programs.main_stages.components.interact_w_json import interact_w_json
+from programs.main_stages.components.file_exists import file_exists
 
 
 #Variables needed:
@@ -44,18 +44,18 @@ else:
 
 while run:
     #Donwload youtube videos if the user have declared them:
-    videos = scan_videos(clips_input)
     if len(youtube_list) > 0:
         for link in youtube_list:
             yt_downloader(link, clips_input) #Downloading the videos to input folder
     
     #Collection all videos for clipping:
     print("Collection videos...")
+    videos = scan_videos(clips_input)
     iterated = 0
     print(f"System is 0% finished")
     for video in videos: 
         videos_update = scan_videos(clips_input)
-        print(f"Videos left: {videos_update}")
+        print(f"Videos left: {len(videos_update)}")
         print("AI_clipper: ", video)
         #Transcribing:
         if file_exists("system/transcribed.json"):
