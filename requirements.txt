@@ -5,4 +5,5 @@ openai-whisper
 openai
 moviepy==1.0.3
 yt_dlp
+tiktoken
 # torch  # Uncomment and specify version if GPU acceleration needed (e.g. torch==2.3.0+cu121)

@@ -9,11 +9,11 @@ from programs.core_functionality.ai_scanning import ai_clipping
 from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 
-#UI cleanup files
+#Componenets
 from programs.components.interact_w_json import interact_w_json
 from programs.components.file_exists import file_exists
 
-#Stages
+#Setup stage
 from programs.setup_stage.setup_stage import setup_stage
 
 setup_settings_path = "system/setup_settings.json"
@@ -24,10 +24,10 @@ if run == False:
 while run:
     #Settings from setup stage
     settings = interact_w_json(setup_settings_path, "r", None)
-    clips_input = settings["setup_variables"]["clips_input"]
-    clips_output = settings["setup_variables"]["clips_output"]
+    clips_input = settings["setup_variables"]["input_folder"]
+    clips_output = settings["setup_variables"]["output_folder"]
     base_url = settings["setup_variables"]["base_url"]
-    model = settings["setup_variables"]["model"]
+    model = settings["setup_variables"]["ai_model"]
     transcribing_model = settings["setup_variables"]["transcribing_model"]
     user_query = settings["setup_variables"]["user_query"]
     youtube_list = settings["setup_variables"]["youtube_list"]

@@ -20,6 +20,7 @@ def setup_stage(settings_path: str):
                 "max_tokens": 0,
                 "output_folder": "",
                 "input_folder": "",
+                "ai_model": "",
                 "base_url": "",
                 "transcribing_model": "",
                 "user_query": "",
@@ -30,10 +31,7 @@ def setup_stage(settings_path: str):
                 "accuracy_model": ""
             }
         }
-        interact_w_json(settings_path, "w", template_settings)
         setup_needed = True
-    else:
-        settings = interact_w_json(settings_path, "r", None)
 
     #Setting up settings if needed
     if setup_needed:
@@ -55,7 +53,9 @@ def setup_stage(settings_path: str):
                 input_folder = input("Please enter the input folder path: ")
         
         ai_model = input("Please enter the AI model name, copypaste from LM studio (e.g., 'gpt-4o'): ")
-        base_url = input("Please enter the base URL for the AI model (LM studio): ")
+        base_url = input("Please enter the base URL for the AI model (LM studio) Make sure to be running the AI: ")
+        if "/v1" not in base_url:
+            base_url = base_url + "/v1"
         print("Testing AI connection...")
         while True:
             try:
@@ -64,8 +64,7 @@ def setup_stage(settings_path: str):
                 break
             except Exception as e:
                 print("AI connection failed. Please check the base URL and model name.")
-            print("Error details: ", str(e))
-            return
+                print("Error details: ", str(e))
 
         transcribing_models = ["tiny", "base", "small", "medium", "large"]
         transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
@@ -81,26 +80,50 @@ def setup_stage(settings_path: str):
                 print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                 break
             except Exception as e:
-                print("Failed to determine max tokens from AI.")
-            print("Error details: ", str(e))
-            return
+                print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
+                print("Error details: ", str(e))
+        
+        #Now creating your settings folder and file
+        template_settings["setup_variables"]["max_tokens"] = max_tokens #int
+        template_settings["setup_variables"]["output_folder"] = output_folder #str
+        template_settings["setup_variables"]["input_folder"] = input_folder #str
+        template_settings["setup_variables"]["ai_model"] = ai_model #str
+        template_settings["setup_variables"]["base_url"] = base_url #str
+        template_settings["setup_variables"]["transcribing_model"] = transcribing_model #str
+        template_settings["setup_variables"]["user_query"] = user_query #str
+        interact_w_json(settings_path, "w", template_settings)
     
+    settings = interact_w_json(settings_path, "r", None)
     skip = input("Are you currently running a session and just want to skip booting stage? (y/N): ").strip().lower()
     if skip in ["n", "no"]:
         #Declaring external variables before checking
-        accuracy_testing_input = input("Do you want to enable accuracy testing? This will re-transcribe the clips at the end to check for accuracy. (Y/n)").strip().lower()
-        while accuracy_testing_input.lower() not in ["y", "n", "yes", "no"]:
-            accuracy_testing_input = input("Invalid input. Please enter 'Y' for yes or 'N' for no: ").strip().lower()
-        if accuracy_testing_input in ["y", "yes"]:
-            accuracy_testing = True
-            accuracy_model = input("Please enter the accuracy transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
-            transcribing_models = ["tiny", "base", "small", "medium", "large"]
-            while accuracy_model not in transcribing_models:
-                accuracy_model = input(f"Invalid model name. Please choose from {transcribing_models}: ")
+        if not settings["accuracy_model"]["accuracy_testing"]:
+            accuracy_testing_input = input("Do you want to enable accuracy testing? This will re-transcribe the clips at the end to check for accuracy. (Y/n)").strip().lower()
+            while accuracy_testing_input.lower() not in ["y", "n", "yes", "no"]:
+                accuracy_testing_input = input("Invalid input. Please enter 'Y' for yes or 'N' for no: ").strip().lower()
+            if accuracy_testing_input in ["y", "yes"]:
+                accuracy_testing = True
+                accuracy_model = input("Please enter the accuracy transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
+                transcribing_models = ["tiny", "base", "small", "medium", "large"]
+                while accuracy_model not in transcribing_models:
+                    accuracy_model = input(f"Invalid model name. Please choose from {transcribing_models}: ")
+            else:
+                accuracy_testing = settings["accuracy_model"]["accuracy_testing"]
+                accuracy_model = settings["accuracy_model"]["accuracy_model"]
         
         youtube_list_input = input("Do you want to download videos from YouTube? If yes, please enter the links separated by commas. If no, just press Enter: ").strip()
         if youtube_list_input:
             youtube_list = [link.strip() for link in youtube_list_input.split(",")]
+        else:
+            youtube_list = settings["setup_variables"]["youtube_list"]
+        
+        max_tokens = settings["setup_variables"]["max_tokens"]
+        output_folder = settings["setup_variables"]["output_folder"]
+        input_folder = settings["setup_variables"]["input_folder"]
+        ai_model = settings["setup_variables"]["ai_model"]
+        base_url = settings["setup_variables"]["base_url"]
+        transcribing_model = settings["setup_variables"]["transcribing_model"]
+        user_query = settings["setup_variables"]["user_query"]
 
         #Checking the variables
         value_errors = []
@@ -112,6 +135,9 @@ def setup_stage(settings_path: str):
         
         if not os.path.exists(input_folder):
             value_errors.append("The specified input folder does not exist: " + input_folder)
+
+        if ai_model.strip() == "":
+            value_errors.append("The AI model is not set.")
 
         if base_url.strip() == "":
             value_errors.append("The AI base URL is not set.")
@@ -132,20 +158,6 @@ def setup_stage(settings_path: str):
         if len(value_errors) > 0:
             for error in value_errors:
                 print("Potential issue: ", error)
-    
-        #Declaring variables from settings
-        max_tokens = settings["setup_variables"]["max_tokens"] #int
-        output_folder = settings["setup_variables"]["output_folder"] #str
-        input_folder = settings["setup_variables"]["input_folder"] #str
-        ai_model = settings["setup_variables"]["ai_model"] #str
-        base_url = settings["setup_variables"]["base_url"] #str
-        transcribing_model = settings["setup_variables"]["transcribing_model"] #str
-        user_query = settings["setup_variables"]["user_query"] #str
-        youtube_list = settings["setup_variables"]["youtube_list"] #list
-        if settings["accuracy_model"]["accuracy_testing"]:
-            accuracy_testing = settings["accuracy_model"]["accuracy_testing"] #bool
-            accuracy_model = settings["accuracy_model"]["accuracy_model"] #str
-
 
         #Boot menu
         answer = input("Would you like to edit some settings before proceeding? (Y/n): ").strip().lower()
@@ -197,6 +209,8 @@ def setup_stage(settings_path: str):
                     ai_model = input("Enter new AI Model: ")
                 elif choice == "5":
                     base_url = input("Enter new Base URL: ")
+                    if "/v1" not in base_url:
+                        base_url = base_url + "/v1"
                 elif choice == "6":
                     transcribing_model = input("Enter new Transcribing Model: ")
                 elif choice == "7":
@@ -231,8 +245,12 @@ def setup_stage(settings_path: str):
                 }
             }
             interact_w_json(settings_path, "w", updated_settings)
+            settings = interact_w_json(settings_path, "r", None)
 
     print("Booting up...")
+    settings = interact_w_json(settings_path, "r", None)
+    base_url = settings["setup_variables"]["base_url"]
+    ai_model = settings["setup_variables"]["ai_model"]
     try:
         interact_w_ai(base_url, ai_model)
         main_run = True

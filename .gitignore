@@ -1,10 +1,14 @@
 # Ignore raw video assets
 videos/
 programs/__pycache__/
+programs/setup_stage/__pycache__
+programs/core_functionality/__pycache__
+programs/components/__pycache__
 output/
 system/transcribed.json
 system/AI.json
 system/Clips.json
+system/
 # (Optional) Uncomment more rules if desired
 # output/
 # system/*.json
