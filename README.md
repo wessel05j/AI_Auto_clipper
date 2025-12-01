@@ -1,5 +1,7 @@
 # AI Clipper
 
+Made for LM-studio ai's
+
 Automated pipeline that (1) scans a folder of videos, (2) transcribes each using Whisper, (3) chunks long transcripts, (4) uses an LLM to identify interesting segments based on a user query, (5) merges nearby timestamps, and (6) exports the matching clips as individual MP4 files.
 
 ## Features

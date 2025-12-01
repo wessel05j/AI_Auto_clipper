@@ -1,8 +1,6 @@
 import os
-import json
 
 #Core files
-from programs.core_functionality.variable_checker import variable_checker
 from programs.core_functionality.scan_videos import scan_videos
 from programs.core_functionality.yt_downloader import yt_downloader
 from programs.core_functionality.transcribing import transcribe_video
@@ -12,37 +10,31 @@ from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 
 #UI cleanup files
-from programs.main_stages.components.interact_w_json import interact_w_json
-from programs.main_stages.components.file_exists import file_exists
+from programs.components.interact_w_json import interact_w_json
+from programs.components.file_exists import file_exists
 
+#Stages
+from programs.setup_stage.setup_stage import setup_stage
 
-#Variables needed:
-user_query = '''
-    Identify and extract long-form motivational clips (60 seconds or longer). 
-    Only select segments where the speaker is directly addressing the audience in an uplifting, encouraging, or inspiring way. 
-    You may also include interesting or insightful moments, but motivation and audience-directed uplift must be the priority.
-'''
-base_url = "http://127.0.0.1:1234/v1"
-model = "openai/gpt-oss-20b"
-clips_input = "videos/"
-clips_output = "output/"
-transcribing_model = "small" #tiny, base, small, medium, large, large-v3, large-v3-turbo
-accuracy_testing = False #If true, will re-transcribe the clip at the end to check for accuracy
-accuracy_model = "medium" #Preferrably large, takes time but the bigger the better chance for accuracy in the clips removing any clutter outside choosen clip... 
-max_token = 10000 #Max tokens per chunk for AI processing
-youtube_list = [] #optional youtube downloading:
-
-
-
-#Checking variables to be correct (To be updated):
-checked = variable_checker(user_query, base_url, model, clips_input, clips_output, transcribing_model, accuracy_model, max_token, youtube_list)
-if len(checked) > 0:
-    print(f"Some variables were not declared. Please fix: {checked}")
-    run = False
-else:
-    run = True
+setup_settings_path = "system/setup_settings.json"
+run = setup_stage(setup_settings_path)
+if run == False:
+    print("Setup stage failed, exiting...")
 
 while run:
+    #Settings from setup stage
+    settings = interact_w_json(setup_settings_path, "r", None)
+    clips_input = settings["setup_variables"]["clips_input"]
+    clips_output = settings["setup_variables"]["clips_output"]
+    base_url = settings["setup_variables"]["base_url"]
+    model = settings["setup_variables"]["model"]
+    transcribing_model = settings["setup_variables"]["transcribing_model"]
+    user_query = settings["setup_variables"]["user_query"]
+    youtube_list = settings["setup_variables"]["youtube_list"]
+    accuracy_testing = settings["accuracy_model"]["accuracy_testing"]
+    accuracy_model = settings["accuracy_model"]["accuracy_model"]
+    max_token = settings["setup_variables"]["max_tokens"]
+
     #Donwload youtube videos if the user have declared them:
     if len(youtube_list) > 0:
         for link in youtube_list:
@@ -130,9 +122,6 @@ while run:
                     filtered_clip = extract_clip(new_clip, video, clips_output, clips_input, len(list_of_clips))
                     list_of_clips.remove(new_clip)
                     interact_w_json("system/Clips.json", "w", list_of_clips)
-            
-        
-
 
         #System updating
         iterated += 1
