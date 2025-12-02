@@ -107,43 +107,17 @@ def setup_stage(settings_path: str):
                 transcribing_models = ["tiny", "base", "small", "medium", "large"]
                 while accuracy_model not in transcribing_models:
                     accuracy_model = input(f"Invalid model name. Please choose from {transcribing_models}: ")
-        else:
-            accuracy_testing = settings["accuracy_model"]["accuracy_testing"]
-            accuracy_model = settings["accuracy_model"]["accuracy_model"]
+                settings["accuracy_model"]["accuracy_testing"] = accuracy_testing
+                settings["accuracy_model"]["accuracy_model"] = accuracy_model
+                interact_w_json(settings_path, "w", settings)
+                settings = interact_w_json(settings_path, "r", None)
         
         youtube_list_input = input("Do you want to download videos from YouTube? If yes, please enter the links separated by commas. If no, just press Enter: ").strip()
         if youtube_list_input:
             youtube_list = [link.strip() for link in youtube_list_input.split(",")]
-        else:
-            youtube_list = settings["setup_variables"]["youtube_list"]
-        
-        max_tokens = settings["setup_variables"]["max_tokens"]
-        output_folder = settings["setup_variables"]["output_folder"]
-        input_folder = settings["setup_variables"]["input_folder"]
-        ai_model = settings["setup_variables"]["ai_model"]
-        base_url = settings["setup_variables"]["base_url"]
-        transcribing_model = settings["setup_variables"]["transcribing_model"]
-        user_query = settings["setup_variables"]["user_query"]
-
-        #Save updated settings
-        updated_settings = {
-                "setup_variables": {
-                    "max_tokens": max_tokens,
-                    "output_folder": output_folder,
-                    "input_folder": input_folder,
-                    "ai_model": ai_model,
-                    "base_url": base_url,
-                    "transcribing_model": transcribing_model,
-                    "user_query": user_query,
-                    "youtube_list": youtube_list,
-                },
-                "accuracy_model": {
-                    "accuracy_testing": accuracy_testing,
-                    "accuracy_model": accuracy_model if accuracy_testing else ""
-                }
-        }
-        interact_w_json(settings_path, "w", updated_settings)
-        settings = interact_w_json(settings_path, "r", None)
+            settings["setup_variables"]["youtube_list"] = youtube_list
+            interact_w_json(settings_path, "w", settings)
+            settings = interact_w_json(settings_path, "r", None)
 
         #Checking the variables
         print("Checking your settings for potential issues...")

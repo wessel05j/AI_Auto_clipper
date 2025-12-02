@@ -39,6 +39,11 @@ while run:
     if len(youtube_list) > 0:
         for link in youtube_list:
             yt_downloader(link, clips_input) #Downloading the videos to input folder
+            youtube_list.remove(link)
+            #Update youtube_list in settings:
+            settings = interact_w_json(setup_settings_path, "r", None)
+            settings["setup_variables"]["youtube_list"] = youtube_list
+            interact_w_json(setup_settings_path, "w", settings)
     
     #Collection all videos for clipping:
     print("Collection videos...")
@@ -83,7 +88,6 @@ while run:
         print(f"Found: {len(list_of_clips)} Clips!")
 
         #Video clipping
-        print(f"Clips left: {len(list_of_clips)}")
         if file_exists("system/Clips.json"):
             print(f"Continuing Clipping...")
             list_of_clips = interact_w_json("system/Clips.json", "r", None)
@@ -121,6 +125,10 @@ while run:
                     new_clip = [clip[0], new_end]
                     filtered_clip = extract_clip(new_clip, video, clips_output, clips_input, len(list_of_clips))
                     list_of_clips.remove(new_clip)
+                    interact_w_json("system/Clips.json", "w", list_of_clips)
+                else:
+                    print("Clip accurate, keeping clip...")
+                    list_of_clips.remove(clip)
                     interact_w_json("system/Clips.json", "w", list_of_clips)
 
         #System updating
