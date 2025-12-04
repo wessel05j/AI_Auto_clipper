@@ -78,7 +78,14 @@ while run:
             print("Scanning with AI...")
             AI_output = []
             for chunked in chunked_transcribed_text:
-                output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text)
+                #If the ai cant handle the amount of tokens, we exit the program with a message
+                try:
+                    output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text)
+                except Exception as e:
+                    print("AI model failed to process the chunked transcribed text. This may be due to exceeding token limits.")
+                    print("Error details:", e)
+                    run = False
+                    break
                 # Append a fresh copy to avoid any unintended shared mutations
                 AI_output.append(output)
             interact_w_json("system/AI.json", "w", AI_output)
