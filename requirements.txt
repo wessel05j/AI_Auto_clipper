@@ -1,9 +1,9 @@
-# Core dependencies for AI_clipper
-# Pin versions later after validation (`pip freeze > requirements.lock.txt`)
+# Core dependencies for AI_Auto_clipper
+# Pin exact versions in a separate lock file if needed.
 
 openai-whisper
 openai
 moviepy==1.0.3
 yt_dlp
 tiktoken
-# torch  # Uncomment and specify version if GPU acceleration needed (e.g. torch==2.3.0+cu121)
+torch  # Install a CPU or CUDA build appropriate for your system
