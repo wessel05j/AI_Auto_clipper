@@ -5,8 +5,8 @@ def yt_downloader(url: str, output: str):
     os.makedirs(output, exist_ok=True)
 
     ydl_opts = {
-        "format": "bv*+ba/b",            # best video + best audio (or best fallback)
-        "merge_output_format": "mp4",    # final file format
+        "format": "bv*+ba/b",
+        "merge_output_format": "mp4",
         "outtmpl": f"{output}/%(title).200B.%(ext)s",
         "quiet": False,
         "noprogress": False,
@@ -14,4 +14,9 @@ def yt_downloader(url: str, output: str):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         print(f"\nDownloading: {url}")
-        ydl.download([url])
+        try:
+            ydl.download([url])
+            return True
+        except yt_dlp.utils.DownloadError as e:
+            print(f"Download failed for {url}: {e}")
+            return False
