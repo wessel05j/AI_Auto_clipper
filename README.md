@@ -29,7 +29,6 @@ Top-level:
 ```text
 AI_Auto_clipper/
   main.py                     # Orchestrates setup + full pipeline
-  ai_clipper.bat              # Optional helper to run from double‑click (Windows)
   programs/
    components/
     file_exists.py          # Tiny helper to check JSON/clip files
@@ -58,7 +57,7 @@ On first run, `system/setup_settings.json` is created automatically by `setup_st
 ## Requirements
 
 ### Python
-- Python **3.9+** (recommended 3.10+).
+- Python **3.10–3.13** (this project is tested with **3.13**).
 
 ### Python packages
 Core runtime dependencies are listed in `requirements.txt`:
@@ -77,8 +76,8 @@ Core runtime dependencies are listed in `requirements.txt`:
 ```powershell
 cd d:\Prosjekter\AI_Auto_clipper
 
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+"C:\Program Files\python.exe" -m venv .venv   # Python 3.13 path on this machine
+\.venv\Scripts\Activate.ps1
 
 pip install --upgrade pip
 pip install -r requirements.txt
