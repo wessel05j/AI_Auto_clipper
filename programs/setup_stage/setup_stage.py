@@ -4,9 +4,10 @@ def setup_stage():
     
 
     #Component imports
-    from programs.components.interact_w_json import interact_w_json
     from programs.components.file_exists import file_exists
     from programs.components.return_tokens import return_tokens
+    from programs.components.wright import wright
+    from programs.components.load import load
     from programs.setup_stage.interact_w_ai import interact_w_ai
     from programs.setup_stage.max_tokens_ai_check import max_tokens_ai_check
 
@@ -166,9 +167,9 @@ def setup_stage():
         template_settings["setup_variables"]["transcribing_model"] = transcribing_model #str
         template_settings["setup_variables"]["user_query"] = user_query #str
         template_settings["setup_variables"]["youtube_list"] = [] #list
-        interact_w_json(settings_path, "w", template_settings)
+        wright(settings_path, template_settings)
     
-    settings = interact_w_json(settings_path, "r", None)
+    settings = load(settings_path)
     skip = input("Are you currently running a session and just want to skip booting stage? (y/N): ").strip().lower()
     if skip in ["n", "no"]:
 
@@ -290,7 +291,7 @@ def setup_stage():
                 else:
                     print("Invalid choice. Please try again.")
                 #Save updated settings
-                new_settings = interact_w_json(settings_path, "r", None)
+                new_settings = load(settings_path)
                 new_settings["setup_variables"]["max_tokens"] = max_tokens
                 new_settings["setup_variables"]["output_folder"] = output_folder
                 new_settings["setup_variables"]["input_folder"] = input_folder
@@ -299,11 +300,11 @@ def setup_stage():
                 new_settings["setup_variables"]["transcribing_model"] = transcribing_model
                 new_settings["setup_variables"]["user_query"] = user_query
                 new_settings["setup_variables"]["youtube_list"] = youtube_list
-                interact_w_json(settings_path, "w", new_settings)
+                wright(settings_path, new_settings)
                 
 
     print("Booting up...")
-    settings = interact_w_json(settings_path, "r", None)
+    settings = load(settings_path)
     base_url = settings["setup_variables"]["base_url"]
     ai_model = settings["setup_variables"]["ai_model"]
     try:

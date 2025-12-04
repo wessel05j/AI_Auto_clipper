@@ -10,8 +10,9 @@ from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 
 #Componenets
-from programs.components.interact_w_json import interact_w_json
 from programs.components.file_exists import file_exists
+from programs.components.load import load
+from programs.components.wright import wright
 
 #Setup stage
 from programs.setup_stage.setup_stage import setup_stage
@@ -24,7 +25,7 @@ if run == False:
 
 while run:
     #Settings from setup stage
-    settings = interact_w_json(settings_path, "r", None)
+    settings = load(settings_path)
     clips_input = settings["setup_variables"]["input_folder"]
     clips_output = settings["setup_variables"]["output_folder"]
     base_url = settings["setup_variables"]["base_url"]
@@ -39,13 +40,20 @@ while run:
 
     #Donwload youtube videos if the user have declared them:
     if len(youtube_list) > 0:
-        for link in youtube_list:
-            yt_downloader(link, clips_input) #Downloading the videos to input folder
-            youtube_list.remove(link)
-            #Update youtube_list in settings:
-            settings = interact_w_json(settings_path, "r", None)
-            settings["setup_variables"]["youtube_list"] = youtube_list
-            interact_w_json(settings_path, "w", settings)
+        #If list is more than 10 videos, only download 10 at a time and then wait 10 minutes before downloading more
+        #This is to avoid getting blocked by youtube for too many requests
+        print(f"Downloading youtube videos...{len(youtube_list)} videos to download.")
+        if len(youtube_list) > 10:
+            for link in youtube_list[:10]:
+                yt_downloader(link, clips_input) #Downloading the videos to input folder
+                youtube_list.remove(link)
+                #Update youtube_list in settings:
+                settings = load(settings_path)
+                settings["setup_variables"]["youtube_list"] = youtube_list
+                wright(settings_path, settings)
+            print("Waiting 10 minutes before downloading more videos...")
+            import time
+            time.sleep(600) #Wait 10 minutes
     
     #Collection all videos for clipping:
     print("Collection videos...")
@@ -59,13 +67,12 @@ while run:
         #Transcribing:
         if file_exists(f"system/{settings['system_variables']['transcribing_name']}"):
             print("Already transcribed...")
-            transcribed_text = interact_w_json(f"system/{settings['system_variables']['transcribing_name']}", "r", None)
+            transcribed_text = load(f"system/{settings['system_variables']['transcribing_name']}")
             
         else:
             print("Transcribing...")
             transcribed_text = transcribe_video(video, transcribing_model)
-            interact_w_json(f"system/{settings['system_variables']['transcribing_name']}", "w", transcribed_text)
-
+            wright(f"system/{settings['system_variables']['transcribing_name']}", transcribed_text)
         #Chunking
         print("Chunking...")
         chunked_transcribed_text = chunking(transcribed_text, max_token)
@@ -74,7 +81,7 @@ while run:
         #AI choosen clips:
         if file_exists(f"system/{settings['system_variables']['AI_name']}"):
             print("Already done AI scanning...")
-            AI_output = interact_w_json(f"system/{settings['system_variables']['AI_name']}", "r", None)
+            AI_output = load(f"system/{settings['system_variables']['AI_name']}")
         else:
             print("Scanning with AI...")
             AI_output = []
@@ -89,7 +96,7 @@ while run:
                     break
                 # Append a fresh copy to avoid any unintended shared mutations
                 AI_output.append(output)
-            interact_w_json(f"system/{settings['system_variables']['AI_name']}", "w", AI_output)
+            wright(f"system/{settings['system_variables']['AI_name']}", AI_output)
         
         #Segment Cleanup
         print("Finding AI scanning in transcribed text...")
@@ -99,7 +106,7 @@ while run:
         #Video clipping
         if file_exists(f"system/{settings['system_variables']['clips_name']}"):
             print(f"Continuing Clipping...")
-            list_of_clips = interact_w_json(f"system/{settings['system_variables']['clips_name']}", "r", None)
+            list_of_clips = load(f"system/{settings['system_variables']['clips_name']}")
 
         else:
             print("Starting Clipping...")
@@ -108,7 +115,7 @@ while run:
             print(f"Clips left: {len(list_of_clips)}")
             filename = extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
             list_of_clips.remove(clip)
-            interact_w_json(f"system/{settings['system_variables']['clips_name']}", "w", list_of_clips)
+            wright(f"system/{settings['system_variables']['clips_name']}", list_of_clips)
 
         #System updating
         iterated += 1
