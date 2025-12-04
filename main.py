@@ -16,6 +16,7 @@ from programs.components.file_exists import file_exists
 #Setup stage
 from programs.setup_stage.setup_stage import setup_stage
 
+safety_tokens = 1000 #Number of tokens to leave as safety margin for the AI models because of user inputs and system message
 setup_settings_path = "system/setup_settings.json"
 run = setup_stage(setup_settings_path)
 if run == False:
@@ -33,7 +34,7 @@ while run:
     youtube_list = settings["setup_variables"]["youtube_list"]
     accuracy_testing = settings["accuracy_model"]["accuracy_testing"]
     accuracy_model = settings["accuracy_model"]["accuracy_model"]
-    max_token = settings["setup_variables"]["max_tokens"]
+    max_token = settings["setup_variables"]["max_tokens"] - safety_tokens
 
     #Donwload youtube videos if the user have declared them:
     if len(youtube_list) > 0:

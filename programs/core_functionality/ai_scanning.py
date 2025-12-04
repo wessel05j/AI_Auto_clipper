@@ -50,7 +50,7 @@ def ai_clipping(transcribed_text, user_query, base_url, model, chunked_transcrib
             - Prefer longer, context-rich clips that remain clearly relevant to the user query.
             - Typical length: 30–360 seconds when possible.
             - Short clips (<30–60 seconds) are allowed only when no longer coherent segment meaningfully fits the query.
-
+            
             Chunk Awareness:
             - You may see only a portion of the full transcript at a time.
             - Avoid starting or ending clips around the very first segments of the visible transcript if it is clearly mid-thought.
