@@ -5,13 +5,22 @@ def max_tokens_ai_check(base_url: str, ai_model: str):
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": f"How manny tokens can you handle in a single prompt and response? Only respond with the number. Your model is: {ai_model}"}
+        {
+            "role": "user",
+            "content": (
+                "How many tokens can you handle in a single prompt and response? "
+                "Only respond with a plain integer number, no text or punctuation."
+            ),
+        },
     ]
 
     response = client.chat.completions.create(
         model=ai_model,
         messages=messages,
-        temperature=0
+        temperature=0,
     )
 
-    return int(response.choices[0].message.content)
+    raw = response.choices[0].message.content.strip()
+    # Remove common formatting like commas and spaces
+    cleaned = raw.replace(",", "").strip()
+    return int(cleaned)

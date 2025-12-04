@@ -16,15 +16,15 @@ from programs.components.file_exists import file_exists
 #Setup stage
 from programs.setup_stage.setup_stage import setup_stage
 
-safety_tokens = 1000 #Number of tokens to leave as safety margin for the AI models because of user inputs and system message
-setup_settings_path = "system/setup_settings.json"
-run = setup_stage(setup_settings_path)
+
+settings_path = "system/settings.json"
+run = setup_stage()
 if run == False:
     print("Setup stage failed, exiting...")
 
 while run:
     #Settings from setup stage
-    settings = interact_w_json(setup_settings_path, "r", None)
+    settings = interact_w_json(settings_path, "r", None)
     clips_input = settings["setup_variables"]["input_folder"]
     clips_output = settings["setup_variables"]["output_folder"]
     base_url = settings["setup_variables"]["base_url"]
@@ -32,9 +32,10 @@ while run:
     transcribing_model = settings["setup_variables"]["transcribing_model"]
     user_query = settings["setup_variables"]["user_query"]
     youtube_list = settings["setup_variables"]["youtube_list"]
-    accuracy_testing = settings["accuracy_model"]["accuracy_testing"]
-    accuracy_model = settings["accuracy_model"]["accuracy_model"]
-    max_token = settings["setup_variables"]["max_tokens"] - safety_tokens
+    max_token = settings["setup_variables"]["max_tokens"]
+    system_message_not_chunked = settings["system_variables"]["AI_instructions"]
+    system_message_chunked = settings["system_variables"]["AI_instructions_w_chunking"]
+
 
     #Donwload youtube videos if the user have declared them:
     if len(youtube_list) > 0:
@@ -42,9 +43,9 @@ while run:
             yt_downloader(link, clips_input) #Downloading the videos to input folder
             youtube_list.remove(link)
             #Update youtube_list in settings:
-            settings = interact_w_json(setup_settings_path, "r", None)
+            settings = interact_w_json(settings_path, "r", None)
             settings["setup_variables"]["youtube_list"] = youtube_list
-            interact_w_json(setup_settings_path, "w", settings)
+            interact_w_json(settings_path, "w", settings)
     
     #Collection all videos for clipping:
     print("Collection videos...")
@@ -56,14 +57,14 @@ while run:
         print(f"Videos left: {len(videos_update)}")
         print("AI_clipper: ", video)
         #Transcribing:
-        if file_exists("system/transcribed.json"):
+        if file_exists(f"system/{settings['system_variables']['transcribing_name']}"):
             print("Already transcribed...")
-            transcribed_text = interact_w_json("system/transcribed.json", "r", None)
+            transcribed_text = interact_w_json(f"system/{settings['system_variables']['transcribing_name']}", "r", None)
             
         else:
             print("Transcribing...")
             transcribed_text = transcribe_video(video, transcribing_model)
-            interact_w_json("system/transcribed.json", "w", transcribed_text)
+            interact_w_json(f"system/{settings['system_variables']['transcribing_name']}", "w", transcribed_text)
 
         #Chunking
         print("Chunking...")
@@ -71,16 +72,16 @@ while run:
         print(f"Chunks created: {len(chunked_transcribed_text)}")
 
         #AI choosen clips:
-        if file_exists("system/AI.json"):
+        if file_exists(f"system/{settings['system_variables']['AI_name']}"):
             print("Already done AI scanning...")
-            AI_output = interact_w_json("system/AI.json", "r", None)
+            AI_output = interact_w_json(f"system/{settings['system_variables']['AI_name']}", "r", None)
         else:
             print("Scanning with AI...")
             AI_output = []
             for chunked in chunked_transcribed_text:
                 #If the ai cant handle the amount of tokens, we exit the program with a message
                 try:
-                    output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text)
+                    output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text, system_message_not_chunked, system_message_chunked)
                 except Exception as e:
                     print("AI model failed to process the chunked transcribed text. This may be due to exceeding token limits.")
                     print("Error details:", e)
@@ -88,7 +89,7 @@ while run:
                     break
                 # Append a fresh copy to avoid any unintended shared mutations
                 AI_output.append(output)
-            interact_w_json("system/AI.json", "w", AI_output)
+            interact_w_json(f"system/{settings['system_variables']['AI_name']}", "w", AI_output)
         
         #Segment Cleanup
         print("Finding AI scanning in transcribed text...")
@@ -96,9 +97,9 @@ while run:
         print(f"Found: {len(list_of_clips)} Clips!")
 
         #Video clipping
-        if file_exists("system/Clips.json"):
+        if file_exists(f"system/{settings['system_variables']['clips_name']}"):
             print(f"Continuing Clipping...")
-            list_of_clips = interact_w_json("system/Clips.json", "r", None)
+            list_of_clips = interact_w_json(f"system/{settings['system_variables']['clips_name']}", "r", None)
 
         else:
             print("Starting Clipping...")
@@ -107,17 +108,17 @@ while run:
             print(f"Clips left: {len(list_of_clips)}")
             filename = extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
             list_of_clips.remove(clip)
-            interact_w_json("system/Clips.json", "w", list_of_clips)
+            interact_w_json(f"system/{settings['system_variables']['clips_name']}", "w", list_of_clips)
 
         #System updating
         iterated += 1
         print(f"System is {iterated/len(videos)*100:.0f}% finished!")
-        if os.path.exists("system/AI.json"):
-            os.remove("system/AI.json")
-        if os.path.exists("system/transcribed.json"):
-            os.remove("system/transcribed.json")
-        if os.path.exists("system/Clips.json"):
-            os.remove("system/Clips.json")
+        if os.path.exists(f"system/{settings['system_variables']['AI_name']}"):
+            os.remove(f"system/{settings['system_variables']['AI_name']}")
+        if os.path.exists(f"system/{settings['system_variables']['transcribing_name']}"):
+            os.remove(f"system/{settings['system_variables']['transcribing_name']}")
+        if os.path.exists(f"system/{settings['system_variables']['clips_name']}"):
+            os.remove(f"system/{settings['system_variables']['clips_name']}")
         if os.path.exists(video):
             os.remove(video)
     
