@@ -37,13 +37,13 @@ while run:
     max_token = settings["setup_variables"]["max_tokens"]
     system_message_not_chunked = settings["system_variables"]["AI_instructions"]
     system_message_chunked = settings["system_variables"]["AI_instructions_w_chunking"]
-
+    print(youtube_list)
 
     #Donwload youtube videos if the user have declared them:
     if len(youtube_list) > 0:
         #If list is more than 10 videos, only download 10 at a time and then wait 10 minutes before downloading more
         #This is to avoid getting blocked by youtube for too many requests
-        print(f"Downloading youtube videos...{len(youtube_list)} videos to download.")
+        print(f"Downloading {len(youtube_list)} youtube videos...")
         if len(youtube_list) > 10:
             for link in youtube_list[:10]:
                 yt_downloader(link, clips_input) #Downloading the videos to input folder
@@ -55,6 +55,16 @@ while run:
             print("Waiting 10 minutes before downloading more videos...")
             import time
             time.sleep(600) #Wait 10 minutes
+        else:
+            for link in youtube_list:
+                yt_downloader(link, clips_input) #Downloading the videos to input folder
+                youtube_list.remove(link)
+                #Update youtube_list in settings:
+                settings = load(settings_path)
+                settings["setup_variables"]["youtube_list"] = youtube_list
+                wright(settings_path, settings)
+        
+
     
     #Collection all videos for clipping:
     print("Collection videos...")
