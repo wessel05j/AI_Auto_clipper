@@ -129,7 +129,7 @@ while run:
             os.remove(f"system/{settings['system_variables']['clips_name']}")
         if os.path.exists(video):
             os.remove(video)
-    
+            
     #Shut down after all videos have been iterated
     print("System finished!")
     run = False

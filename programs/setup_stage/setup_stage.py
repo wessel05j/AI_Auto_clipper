@@ -148,7 +148,7 @@ def setup_stage():
         
         user_query = input("Please enter your query for the AI to choose clips (e.g., 'Find all clips where someone is talking about cats'): ")
 
-        print("Finding out how many tokens the AI can handle...")
+        print("Finding out how many tokens the AI can handle (This can take some while)...")
         while True:
             try:
                 max_tokens = int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query)
