@@ -32,6 +32,7 @@ def setup_stage():
                 "transcribing_model": "",
                 "user_query": "",
                 "youtube_list": [],
+                "merge_distance": 30
             },
             "system_variables": {
                 "version": "1.0.0",
@@ -215,6 +216,7 @@ def setup_stage():
         transcribing_model = settings["setup_variables"]["transcribing_model"]
         user_query = settings["setup_variables"]["user_query"]
         youtube_list = settings["setup_variables"]["youtube_list"]
+        merge_distance = settings["setup_variables"]["merge_distance"]
 
         answer = input("Would you like to edit some settings before proceeding? (Y/n): ").strip().lower()
         if answer in ["y", "yes"]:
@@ -228,6 +230,7 @@ def setup_stage():
                 print(f"6. Transcribing Model: {transcribing_model}")
                 print(f"7. User Query: {user_query}")
                 print(f"8. YouTube Links: {youtube_list}")
+                print(f"9. Merge Distance (highly impacts length of video): {merge_distance}")
                 print("0. Boot up with current settings")
 
                 choice = input("Enter the number of your choice: ").strip()
@@ -286,6 +289,11 @@ def setup_stage():
                         youtube_list = [link.strip() for link in youtube_list_input.split(",")]
                     else:
                         print("Please write on of the following n, new, a or add")
+                elif choice == "9":
+                    try:
+                        merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
+                    except Exception as e:
+                        print(f"Make sure its an integer: {e}")
                 elif choice == "0":
                     break
                 else:
@@ -300,6 +308,7 @@ def setup_stage():
                 new_settings["setup_variables"]["transcribing_model"] = transcribing_model
                 new_settings["setup_variables"]["user_query"] = user_query
                 new_settings["setup_variables"]["youtube_list"] = youtube_list
+                new_settings["setup_variables"]["merge_distance"] = merge_distance
                 wright(settings_path, new_settings)
                 
 

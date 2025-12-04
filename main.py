@@ -33,6 +33,7 @@ while run:
     transcribing_model = settings["setup_variables"]["transcribing_model"]
     user_query = settings["setup_variables"]["user_query"]
     youtube_list = settings["setup_variables"]["youtube_list"]
+    merge_distance = settings["setup_variables"]["merge_distance"]
     max_token = settings["setup_variables"]["max_tokens"]
     system_message_not_chunked = settings["system_variables"]["AI_instructions"]
     system_message_chunked = settings["system_variables"]["AI_instructions_w_chunking"]
@@ -100,7 +101,7 @@ while run:
         
         #Segment Cleanup
         print("Finding AI scanning in transcribed text...")
-        list_of_clips = merge_segments(AI_output, 30)
+        list_of_clips = merge_segments(AI_output, merge_distance)
         print(f"Found: {len(list_of_clips)} Clips!")
 
         #Video clipping
