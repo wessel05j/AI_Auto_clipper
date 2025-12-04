@@ -5,7 +5,7 @@ def max_tokens_ai_check(base_url: str, ai_model: str):
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "How manny tokens can you handle in a single prompt and response? Only respond with the number."}
+        {"role": "user", "content": f"How manny tokens can you handle in a single prompt and response? Only respond with the number. Your model is: {ai_model}"}
     ]
 
     response = client.chat.completions.create(

@@ -89,7 +89,7 @@ while run:
                 # Append a fresh copy to avoid any unintended shared mutations
                 AI_output.append(output)
             interact_w_json("system/AI.json", "w", AI_output)
-
+        
         #Segment Cleanup
         print("Finding AI scanning in transcribed text...")
         list_of_clips = merge_segments(AI_output, 30)

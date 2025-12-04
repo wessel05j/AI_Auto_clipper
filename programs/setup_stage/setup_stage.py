@@ -82,6 +82,7 @@ def setup_stage(settings_path: str):
             except Exception as e:
                 print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
                 print("Error details: ", str(e))
+                max_tokens = input("Please input what max tokens is: ")
         
         #Now creating your settings folder and file
         template_settings["setup_variables"]["max_tokens"] = max_tokens #int
@@ -122,32 +123,33 @@ def setup_stage(settings_path: str):
         #Checking the variables
         print("Checking your settings for potential issues...")
         value_errors = []
-        if max_tokens <= 500:
+        #Issue here: check with settings["setup_variables"]["max_tokens"]
+        if settings["setup_variables"]["max_tokens"] <= 500:
             value_errors.append("Your AI max tokens setting is too low. Please choose higher capacity AI.")
         
-        if not os.path.exists(output_folder):
-            value_errors.append("The specified output folder does not exist: " + output_folder)
+        if not os.path.exists(settings["setup_variables"]["output_folder"]):
+            value_errors.append("The specified output folder does not exist: " + settings["setup_variables"]["output_folder"])
         
-        if not os.path.exists(input_folder):
-            value_errors.append("The specified input folder does not exist: " + input_folder)
+        if not os.path.exists(settings["setup_variables"]["input_folder"]):
+            value_errors.append("The specified input folder does not exist: " + settings["setup_variables"]["input_folder"])
 
-        if ai_model.strip() == "":
+        if settings["setup_variables"]["ai_model"].strip() == "":
             value_errors.append("The AI model is not set.")
 
-        if base_url.strip() == "":
+        if settings["setup_variables"]["base_url"].strip() == "":
             value_errors.append("The AI base URL is not set.")
         
-        if transcribing_model.strip() == "":
+        if settings["setup_variables"]["transcribing_model"].strip() == "":
             value_errors.append("The transcribing model is not set.")
         
-        if user_query.strip() == "":
+        if settings["setup_variables"]["user_query"].strip() == "":
             value_errors.append("The user query is not set.")
         
-        if youtube_list is None:
+        if settings["setup_variables"]["youtube_list"] is None:
             value_errors.append("The youtube list is not set.")
         
-        if accuracy_testing:
-            if accuracy_model.strip() == "":
+        if settings["accuracy_model"]["accuracy_testing"]:
+            if settings["accuracy_model"]["accuracy_model"].strip() == "":
                 value_errors.append("The accuracy model is not set while accuracy testing is enabled.")
         print(f"Found {len(value_errors)} potential issues.\n")
         if len(value_errors) > 0:
@@ -174,16 +176,19 @@ def setup_stage(settings_path: str):
 
                 choice = input("Enter the number of your choice: ").strip()
                 if choice == "1":
-                    manual = input("Do you want to manually enter max tokens or let AI do it? (Y/n): ").strip().lower()
+                    manual = input("Do you want to manually enter max tokens (Y/n): ").strip().lower()
                     if manual in ["y", "yes"]:
                         try:
                             max_tokens = int(input("Enter new Max Tokens: ").strip())
+                        except Exception as e:
+                            print(f"Make sure its an integer: {e}")
+                    else:
+                        try:
+                            max_tokens = max_tokens_ai_check(base_url, ai_model)
                             print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                         except Exception as e:
-                            print(f"Error interacting with AI (Make sure the AI service is available): {e}")
-                    else:
-                        max_tokens = max_tokens_ai_check(base_url, ai_model)
-                        print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
+                            print(f"AI at its task: {e}")
+                            
                 elif choice == "2":
                     output_folder = input("Please enter the output folder path: ")
                     if "/" not in output_folder and "\\" not in output_folder:
@@ -211,13 +216,26 @@ def setup_stage(settings_path: str):
                 elif choice == "7":
                     user_query = input("Enter new User Query: ")
                 elif choice == "8":
-                    youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
-                    youtube_list = [link.strip() for link in youtube_list_input.split(",")]
+                    question = input("Would you like to add or create a new list (add/new)?").lower()
+                    if question in ["a", "add"]:
+                        youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                        current_youtube_list = settings["setup_variables"]["youtube_list"]
+                        for link in current_youtube_list:
+                            youtube_list.append(link)
+                        new_list = [link.strip() for link in youtube_list_input.split(",")]
+                        for new_link in new_list:
+                            youtube_list.append(new_link)
+                    elif question in ["n", "new"]:
+                        youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                        youtube_list = [link.strip() for link in youtube_list_input.split(",")]
+                    else:
+                        print("Please write on of the following n, new, a or add")
+
                 elif choice == "9":
                     accuracy_testing_input = input("Enable accuracy testing? (Y/n): ").strip().lower()
                     accuracy_testing = accuracy_testing_input in ["y", "yes"]
                 elif choice == "10" and settings["accuracy_model"]["accuracy_testing"]:
-                    accuracy_model = input("Enter new Accuracy Model: ")
+                    accuracy_model = input("Enter new Accuracy Model (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
                 elif choice == "0":
                     break
                 else:
