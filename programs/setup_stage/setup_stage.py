@@ -26,10 +26,6 @@ def setup_stage(settings_path: str):
                 "user_query": "",
                 "youtube_list": [],
             },
-            "accuracy_model": {
-                "accuracy_testing": False,
-                "accuracy_model": ""
-            }
         }
         setup_needed = True
 
@@ -97,28 +93,6 @@ def setup_stage(settings_path: str):
     settings = interact_w_json(settings_path, "r", None)
     skip = input("Are you currently running a session and just want to skip booting stage? (y/N): ").strip().lower()
     if skip in ["n", "no"]:
-        #Declaring external variables before checking
-        if not settings["accuracy_model"]["accuracy_testing"]:
-            accuracy_testing_input = input("Do you want to enable accuracy testing? This will re-transcribe the clips at the end to check for accuracy. (Y/n)").strip().lower()
-            while accuracy_testing_input.lower() not in ["y", "n", "yes", "no"]:
-                accuracy_testing_input = input("Invalid input. Please enter 'Y' for yes or 'N' for no: ").strip().lower()
-            if accuracy_testing_input in ["y", "yes"]:
-                accuracy_testing = True
-                accuracy_model = input("Please enter the accuracy transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
-                transcribing_models = ["tiny", "base", "small", "medium", "large"]
-                while accuracy_model not in transcribing_models:
-                    accuracy_model = input(f"Invalid model name. Please choose from {transcribing_models}: ")
-                settings["accuracy_model"]["accuracy_testing"] = accuracy_testing
-                settings["accuracy_model"]["accuracy_model"] = accuracy_model
-                interact_w_json(settings_path, "w", settings)
-                settings = interact_w_json(settings_path, "r", None)
-        
-        youtube_list_input = input("Do you want to download videos from YouTube? If yes, please enter the links separated by commas. If no, just press Enter: ").strip()
-        if youtube_list_input:
-            youtube_list = [link.strip() for link in youtube_list_input.split(",")]
-            settings["setup_variables"]["youtube_list"] = youtube_list
-            interact_w_json(settings_path, "w", settings)
-            settings = interact_w_json(settings_path, "r", None)
 
         #Checking the variables
         print("Checking your settings for potential issues...")
@@ -148,9 +122,6 @@ def setup_stage(settings_path: str):
         if settings["setup_variables"]["youtube_list"] is None:
             value_errors.append("The youtube list is not set.")
         
-        if settings["accuracy_model"]["accuracy_testing"]:
-            if settings["accuracy_model"]["accuracy_model"].strip() == "":
-                value_errors.append("The accuracy model is not set while accuracy testing is enabled.")
         print(f"Found {len(value_errors)} potential issues.\n")
         if len(value_errors) > 0:
             for error in value_errors:
@@ -169,9 +140,6 @@ def setup_stage(settings_path: str):
                 print(f"6. Transcribing Model: {transcribing_model}")
                 print(f"7. User Query: {user_query}")
                 print(f"8. YouTube Links: {youtube_list}")
-                print(f"9. Accuracy Testing: {accuracy_testing}")
-                if settings["accuracy_model"]["accuracy_testing"]:
-                    print(f"10. Accuracy Model: {accuracy_model}")
                 print("0. Done Editing")
 
                 choice = input("Enter the number of your choice: ").strip()
@@ -230,12 +198,6 @@ def setup_stage(settings_path: str):
                         youtube_list = [link.strip() for link in youtube_list_input.split(",")]
                     else:
                         print("Please write on of the following n, new, a or add")
-
-                elif choice == "9":
-                    accuracy_testing_input = input("Enable accuracy testing? (Y/n): ").strip().lower()
-                    accuracy_testing = accuracy_testing_input in ["y", "yes"]
-                elif choice == "10" and settings["accuracy_model"]["accuracy_testing"]:
-                    accuracy_model = input("Enter new Accuracy Model (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
                 elif choice == "0":
                     break
                 else:
@@ -252,10 +214,6 @@ def setup_stage(settings_path: str):
                     "user_query": user_query,
                     "youtube_list": youtube_list,
                 },
-                "accuracy_model": {
-                    "accuracy_testing": accuracy_testing,
-                    "accuracy_model": accuracy_model if accuracy_testing else ""
-                }
             }
             interact_w_json(settings_path, "w", updated_settings)
             settings = interact_w_json(settings_path, "r", None)
