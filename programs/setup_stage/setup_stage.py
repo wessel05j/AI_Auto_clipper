@@ -15,6 +15,7 @@ def setup_stage():
     setup_needed = False
     main_run = False
     settings_path = "system/settings.json"
+    safety_range = 300  #Tokens to leave as safety margin when calculating max tokens
 
     #Ensure we have a system folder
     if not os.path.exists("system/"):
@@ -40,70 +41,46 @@ def setup_stage():
                 "AI_name": "AI.json",
                 "clips_name": "clips.json",
                 "AI_instructions_w_chunking": '''
-                    You are a Context-Aware Transcript Editor. Your purpose is to extract semantically complete conversational segments based on a user query.
+                    You are a transcript clip selector.
 
-                    Transcript Format:
-                    You receive a transcript as JSON: [[start, end, "text"], ...] where start and end are seconds (floats) and text is the spoken content.
+                    Input:
+                    - JSON transcript: [[start, end, "text"], ...] with start/end in seconds.
 
-                    Strict Output Format:
-                    Return ONLY a JSON array of [start, end] pairs: [[start1, end1], [start2, end2], ...].
-                    No reasoning, no explanations, no extra keys, no comments.
-                    The JSON must be syntactically valid and parseable.
+                    Output (strict):
+                    - ONLY JSON: [[start1, end1], [start2, end2], ...]
+                    - No explanations, no extra keys, no comments.
 
-                    Time Precision:
-                    - Preserve the full floating-point precision of the timestamps.
-                    - Do NOT round start or end times to a fixed number of decimals.
-                    - If the transcript shows times like 10.3725, use that full precision in your output.
+                    Rules:
+                    - Keep full timestamp precision; do not round.
+                    - Each clip must be a complete thought: clear beginning, middle, and end.
+                    - Never start or end in the middle of a word or sentence.
+                    - Prefer natural pauses and paragraph boundaries for cut points.
+                    - Prefer context-rich clips (roughly 30–360 seconds) that clearly match the user query.
+                    - If no segments match the query, return an empty list: [].
 
-                    Thought Unit and Completeness Rules:
-                    - Each clip must be a semantically complete thought with a beginning (setup), middle (discussion), and end (resolution or clear pause).
-                    - Never start mid-sentence or mid-word; prefer natural sentence or paragraph beginnings.
-                    - Do not end mid-sentence, mid-list, or in the middle of an explanation; stop at a natural pause or conclusion.
-
-                    Length and Relevance:
-                    - Prefer longer, context-rich clips that remain clearly relevant to the user query.
-                    - Typical length: 30–360 seconds when possible.
-                    - Short clips (<30–60 seconds) are allowed only when no longer coherent segment meaningfully fits the query.
-                    
-                    Chunk Awareness:
-                    - You may see only a portion of the full transcript at a time.
-                    - Avoid starting or ending clips around the very first segments of the visible transcript if it is clearly mid-thought.
-                    - NEVER make a clip with the last segment of an transcript.
-                    - If a topic obviously continues beyond the visible end, end your clip at the last natural boundary you can see, not at a mid-sentence cutoff.
-
-                    Query Conditioning:
-                    - Select only clips that are clearly relevant to the user query.
-                    - Some extra surrounding context before and after is allowed if it preserves a natural conversational flow.
+                    Chunking:
+                    - You may only see part of the transcript.
+                    - Avoid starting/ending at obvious mid-thought edges of a chunk.
+                    - Never create a clip that uses the very last segment of a transcript chunk.
+                    - If the topic seems to continue beyond what you see, end at the last natural boundary available, not mid-sentence.
                     ''',
                 "Ai_instructions": '''
-                    You are a Context-Aware Transcript Editor. Your purpose is to extract semantically complete conversational segments based on a user query.
+                    You are a transcript clip selector.
 
-                    Transcript Format:
-                    You receive a transcript as JSON: [[start, end, "text"], ...] where start and end are seconds (floats) and text is the spoken content.
+                    Input:
+                    - JSON transcript: [[start, end, "text"], ...] with start/end in seconds.
 
-                    Strict Output Format:
-                    Return ONLY a JSON array of [start, end] pairs: [[start1, end1], [start2, end2], ...].
-                    No reasoning, no explanations, no extra keys, no comments.
-                    The JSON must be syntactically valid and parseable.
+                    Output (strict):
+                    - ONLY JSON: [[start1, end1], [start2, end2], ...]
+                    - No explanations, no extra keys, no comments.
 
-                    Time Precision:
-                    - Preserve the full floating-point precision of the timestamps.
-                    - Do NOT round start or end times to a fixed number of decimals.
-                    - If the transcript shows times like 10.3725, use that full precision in your output.
-
-                    Thought Unit and Completeness Rules:
-                    - Each clip must be a semantically complete thought with a beginning (setup), middle (discussion), and end (resolution or clear pause).
-                    - Never start mid-sentence or mid-word; prefer natural sentence or paragraph beginnings.
-                    - Do not end mid-sentence, mid-list, or in the middle of an explanation; stop at a natural pause or conclusion.
-
-                    Length and Relevance:
-                    - Prefer longer, context-rich clips that remain clearly relevant to the user query.
-                    - Typical length: 30–360 seconds when possible.
-                    - Short clips (<30–60 seconds) are allowed only when no longer coherent segment meaningfully fits the query.
-
-                    Query Conditioning:
-                    - Select only clips that are clearly relevant to the user query.
-                    - Some extra surrounding context before and after is allowed if it preserves a natural conversational flow.
+                    Rules:
+                    - Keep full timestamp precision; do not round.
+                    - Each clip must be a complete thought: clear beginning, middle, and end.
+                    - Never start or end in the middle of a word or sentence.
+                    - Prefer natural pauses and paragraph boundaries for cut points.
+                    - Prefer context-rich clips (roughly 30–360 seconds) that clearly match the user query.
+                    - If no segments match the query, return an empty list: [].
                     '''
             }
         }
@@ -151,7 +128,7 @@ def setup_stage():
         print("Finding out how many tokens the AI can handle (This can take some while)...")
         while True:
             try:
-                max_tokens = int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query)
+                max_tokens = int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query) - safety_range
                 print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                 break
             except Exception as e:
@@ -238,13 +215,26 @@ def setup_stage():
                     manual = input("Do you want to manually enter max tokens (Y/n): ").strip().lower()
                     if manual in ["y", "yes"]:
                         try:
-                            max_tokens = int(input("Enter new Max Tokens: ").strip()) - return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(settings["system_variables"]["user_query"])
+                            raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
+                            overhead = (
+                                return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
+                                return_tokens(settings["setup_variables"]["user_query"]) +
+                                safety_range
+                            )
+                            max_tokens = raw_max - overhead
+                            print(f"Effective max_tokens for transcript content: {max_tokens}")
                         except Exception as e:
-                            print(f"Make sure its an integer: {e}")
+                            print(f"Make sure it's an integer: {e}")
                     else:
                         try:
-                            max_tokens = max_tokens_ai_check(base_url, ai_model) - return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query)
-                            print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
+                            raw_max = max_tokens_ai_check(base_url, ai_model)
+                            overhead = (
+                                return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
+                                return_tokens(user_query) +
+                                safety_range
+                            )
+                            max_tokens = raw_max - overhead
+                            print(f"AI can handle up to {max_tokens} tokens for transcript content.")
                         except Exception as e:
                             print(f"AI at its task: {e}")
                             
@@ -323,9 +313,8 @@ def setup_stage():
         print(f"Error interacting with AI (Make sure the AI service is available): {e}")
     
     return main_run
-            
-        
-    
-    
 
-    
+
+
+
+
