@@ -64,7 +64,7 @@ def setup_stage():
                     - Never create a clip that uses the very last segment of a transcript chunk.
                     - If the topic seems to continue beyond what you see, end at the last natural boundary available, not mid-sentence.
                     ''',
-                "Ai_instructions": '''
+                "AI_instructions": '''
                     You are a transcript clip selector.
 
                     Input:
@@ -313,8 +313,3 @@ def setup_stage():
         print(f"Error interacting with AI (Make sure the AI service is available): {e}")
     
     return main_run
-
-
-
-
-

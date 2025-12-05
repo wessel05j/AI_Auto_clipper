@@ -33,6 +33,8 @@ AI_Auto_clipper/
    components/
     file_exists.py          # Tiny helper to check JSON/clip files
     interact_w_json.py      # Read/write JSON helper
+    load.py                 # JSON load wrapper
+    wright.py               # JSON write wrapper
    core_functionality/
     scan_videos.py          # Collects video file paths from input folder
     yt_downloader.py        # Downloads YouTube videos to input folder
@@ -45,12 +47,12 @@ AI_Auto_clipper/
     setup_stage.py          # Interactive first‑run and boot menu
     interact_w_ai.py        # Test LLM connection
     max_tokens_ai_check.py  # Ask the LLM for its max tokens
-  system/                     # Settings + temporary JSON artifacts
+  system/                     # Settings + temporary JSON artifacts (settings.json, log.txt, run_state.json)
   videos/                     # (Optional) Example input folder for local videos
   output/                     # Generated clips
 ```
 
-On first run, `system/setup_settings.json` is created automatically by `setup_stage.py`.
+On first run, `system/settings.json` is created automatically by `setup_stage.py`.
 
 ---
 
@@ -107,9 +109,15 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
   .\.venv\Scripts\Activate.ps1
   ```
 
-4. **Run the main script**
+4. **Run the main script (or use the launcher)**
   ```powershell
   python main.py
+  ```
+
+  Or use the provided batch launcher, which can also start LM Studio for you:
+
+  ```powershell
+  .\AI_clipper.bat
   ```
 
 5. **Follow the interactive setup** (first run)
@@ -120,13 +128,14 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
   - Transcribing model (`tiny`, `base`, `small`, `medium`, `large`).
   - User query (e.g. *"Find all clips about mindset and motivation"*).
   - The setup will test the AI connection and query the model for `max_tokens`.
-  - Optional: enable **accuracy testing** (will re‑transcribe clips at the end).
   - Optional: provide a list of YouTube URLs to download before clipping.
+  - Optional: provide the full path to your **LM Studio `.lnk` shortcut** (used by `AI_clipper.bat`).
 
 6. **Subsequent runs**
   - On later runs, you’re asked if you want to skip the booting stage.
   - You can review and edit saved settings (max tokens, folders, model, query, etc.).
   - When boot succeeds, the system starts scanning your input folder and processing videos.
+  - If a previous run was interrupted, the system detects the `run_state.json` file and offers to resume or start fresh.
 
 Output clips are written incrementally to the configured output folder.
 
@@ -153,15 +162,16 @@ For each video:
   - All responses are collected into `system/AI.json`.
 
 5. **Merge & clip**
-  - `merge_segments.py` flattens and merges nearby `[start, end]` segments using a tolerance window (currently 30 seconds).
+  - `merge_segments.py` flattens and merges nearby `[start, end]` segments using a tolerance window (30 seconds by default, configurable in settings).
   - `extract_clip.py` uses MoviePy to cut each `[start, end]` region into an MP4 clip in the output folder.
 
 6. **Optional accuracy testing**
   - If enabled, each clip is re‑transcribed using a chosen Whisper model.
   - Very short or obviously cut‑off endings are detected and the clip is rebuilt with a slightly earlier end time.
 
-7. **Cleanup**
-  - Intermediate JSONs (`system/transcribed.json`, `system/AI.json`, `system/Clips.json`) and the processed source video are deleted.
+7. **Cleanup & logging**
+  - Intermediate JSONs (`system/transcribed.json`, `system/AI.json`, `system/clips.json`) and the processed source video are deleted.
+  - A log of each run is written to `system/log.txt`.
 
 ---
 
