@@ -1,6 +1,7 @@
 import os
+import traceback
 
-#Core files
+# Core files
 from programs.core_functionality.scan_videos import scan_videos
 from programs.core_functionality.yt_downloader import yt_downloader
 from programs.core_functionality.transcribing import transcribe_video
@@ -9,27 +10,40 @@ from programs.core_functionality.ai_scanning import ai_clipping
 from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 
-#Componenets
+# Components
 from programs.components.file_exists import file_exists
 from programs.components.load import load
 from programs.components.wright import wright
 
-#Setup stage
+# Setup stage
 from programs.setup_stage.setup_stage import setup_stage
 
 
 settings_path = "system/settings.json"
 
-try:
-    run = setup_stage()
-except Exception as e:
-    print("Fatal error during setup stage:", e)
-    run = False
 
-if run is False:
-    print("Setup stage failed, exiting main loop...")
+def log_fatal_error(message: str, exc: Exception) -> None:
+    """Print a clear fatal error with traceback so the user knows exactly what happened."""
+    print("\n==== FATAL ERROR ====")
+    print(message)
+    print("Error type:", type(exc).__name__)
+    print("Error message:", exc)
+    print("Traceback:")
+    traceback.print_exc()
+    print("====================\n")
 
-while run:
+
+def main() -> None:
+    try:
+        run = setup_stage()
+    except Exception as e:
+        log_fatal_error("Fatal error during setup stage.", e)
+        return
+
+    if not run:
+        print("Setup stage failed, exiting main loop...")
+        return
+
     #Settings from setup stage
     settings = load(settings_path)
     clips_input = settings["setup_variables"]["input_folder"]
@@ -55,12 +69,14 @@ while run:
         print(f"Downloading {len(youtube_list)} youtube videos...")
         try:
             if len(youtube_list) > 10:
+                # Work on a copy so we don't modify the list while iterating
                 for link in youtube_list[:10]:
                     try:
                         yt_downloader(link, clips_input)  # Downloading the videos to input folder
                     except Exception as e:
                         print(f"Error downloading YouTube video {link}:", e)
-                        continue
+                        # Stop the whole run on hard failure instead of silently continuing
+                        raise
                     youtube_list.remove(link)
                     #Update youtube_list in settings:
                     settings = load(settings_path)
@@ -75,16 +91,15 @@ while run:
                         yt_downloader(link, clips_input)  # Downloading the videos to input folder
                     except Exception as e:
                         print(f"Error downloading YouTube video {link}:", e)
-                        continue
+                        raise
                     youtube_list.remove(link)
                     #Update youtube_list in settings:
                     settings = load(settings_path)
                     settings["setup_variables"]["youtube_list"] = youtube_list
                     wright(settings_path, settings)
         except Exception as e:
-            print("Unexpected error in YouTube download loop:", e)
-            run = False
-            break
+            log_fatal_error("Unexpected error in YouTube download loop.", e)
+            return
         
 
     
@@ -110,9 +125,8 @@ while run:
                 transcribed_text = transcribe_video(video, transcribing_model)
                 wright(f"system/{transcribing_name}", transcribed_text)
         except Exception as e:
-            print(f"Error during transcription for video {video}:", e)
-            run = False
-            break
+            log_fatal_error(f"Error during transcription for video {video}.", e)
+            return
 
         try:
             #Chunking
@@ -120,9 +134,8 @@ while run:
             chunked_transcribed_text = chunking(transcribed_text, max_token, model)
             print(f"Chunks created: {len(chunked_transcribed_text)}")
         except Exception as e:
-            print(f"Error during chunking for video {video}:", e)
-            run = False
-            break
+            log_fatal_error(f"Error during chunking for video {video}.", e)
+            return
 
         try:
             #AI chosen clips:
@@ -144,11 +157,11 @@ while run:
                             system_message_chunked,
                         )
                     except Exception as e:
-                        print("AI model failed to process the chunked transcribed text. This may be due to exceeding token limits or a connectivity issue.")
-                        print("Error details:", e)
-                        AI_output = []
-                        run = False
-                        break
+                        log_fatal_error(
+                            "AI model failed to process the chunked transcribed text. This may be due to exceeding token limits or a connectivity issue.",
+                            e,
+                        )
+                        return
                     # Append a fresh copy to avoid any unintended shared mutations
                     AI_output.append(output)
 
@@ -158,9 +171,8 @@ while run:
 
                 wright(f"system/{AI_name}", AI_output)
         except Exception as e:
-            print(f"Unexpected error during AI scanning for video {video}:", e)
-            run = False
-            break
+            log_fatal_error(f"Unexpected error during AI scanning for video {video}.", e)
+            return
 
         try:
             #Segment Cleanup
@@ -168,9 +180,8 @@ while run:
             list_of_clips = merge_segments(AI_output, merge_distance)
             print(f"Found: {len(list_of_clips)} Clips!")
         except Exception as e:
-            print(f"Error during segment merging for video {video}:", e)
-            run = False
-            break
+            log_fatal_error(f"Error during segment merging for video {video}.", e)
+            return
 
         #Video clipping
         if file_exists(f"system/{clips_name}"):
@@ -186,12 +197,8 @@ while run:
                 list_of_clips.remove(clip)
                 wright(f"system/{clips_name}", list_of_clips)
             except Exception as e:
-                print(f"Error extracting clip {clip} from video {video}:", e)
-                # Try to move on to the next clip
-                list_of_clips.remove(clip)
-                wright(f"system/{clips_name}", list_of_clips)
-                run = False
-                break
+                log_fatal_error(f"Error extracting clip {clip} from video {video}.", e)
+                return
 
         #System updating
         iterated += 1
@@ -206,10 +213,12 @@ while run:
             if os.path.exists(video):
                 os.remove(video)
         except Exception as e:
-            print(f"Error during cleanup for video {video}:", e)
-            run = False
-            break
-            
+            log_fatal_error(f"Error during cleanup for video {video}.", e)
+            return
+
     #Shut down after all videos have been iterated
     print("System finished!")
-    run = False
+
+
+if __name__ == "__main__":
+    main()
