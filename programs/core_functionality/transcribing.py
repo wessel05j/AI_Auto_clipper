@@ -1,25 +1,60 @@
-def transcribe_video(folder, model):
-    import whisper
-    model = whisper.load_model(model)
+def transcribe_video(folder, model_name, merge_seconds=30, min_pause=0.3):
+    import whisper, re
+
+    # Load model
+    model = whisper.load_model(model_name)
     result = model.transcribe(folder, verbose=False)
+
+    # Regex for strong sentence ending
+    strong_end = re.compile(r"[\.!\?]+(?:\"|'|\s|$)")
+
     merged = []
     current = None
+
     for seg in result["segments"]:
+        seg_text = seg["text"].strip()
+
         if current is None:
-            current = {"start": seg["start"], "end": seg["end"], "text": seg["text"]}
+            current = {
+                "start": seg["start"],
+                "end": seg["end"],
+                "text": seg_text
+            }
             continue
 
-        # If current merged duration is still short and text doesn't end with .?!, keep merging
-        too_short = current["end"] - current["start"] < 30
-        ends_clean = current["text"].strip().endswith((".", "?", "!"))
-        if too_short and not ends_clean:
-            current["end"] = seg["end"]
-            current["text"] += " " + seg["text"]
-        else:
-            merged.append([current["start"], current["end"], current["text"]])
-            current = {"start": seg["start"], "end": seg["end"], "text": seg["text"]}
+        # --- RULES FOR SAFE MERGING ---
 
+        duration = current["end"] - current["start"]
+        pause = seg["start"] - current["end"]
+
+        has_strong_end = bool(strong_end.search(current["text"]))
+        is_short = duration < merge_seconds
+        pause_too_small = pause < min_pause  # avoid merging across big silence
+
+        # Merge conditions:
+        # 1. Current segment is short
+        # 2. Text does NOT end with a strong end
+        # 3. No big pause between segments
+        if is_short and not has_strong_end and pause_too_small:
+            current["end"] = seg["end"]
+            current["text"] = (current["text"] + " " + seg_text).strip()
+        else:
+            # finalize
+            merged.append([
+                current["start"],
+                current["end"],
+                current["text"].strip()
+            ])
+
+            # start new
+            current = {
+                "start": seg["start"],
+                "end": seg["end"],
+                "text": seg_text
+            }
+
+    # Append last one
     if current:
-        merged.append([current["start"], current["end"], current["text"]])
+        merged.append([current["start"], current["end"], current["text"].strip()])
 
     return merged

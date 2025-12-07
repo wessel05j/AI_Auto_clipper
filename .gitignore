@@ -10,6 +10,7 @@ system/AI.json
 system/Clips.json
 system/
 venv/
+lm_studio_path.cfg
 # (Optional) Uncomment more rules if desired
 # output/
 # system/*.json

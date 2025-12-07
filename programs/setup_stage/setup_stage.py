@@ -1,7 +1,6 @@
-def setup_stage():
+def setup_stage(SETTINGS_FILE: str):
     #Python imports
     import os
-    
 
     #Component imports
     from programs.components.file_exists import file_exists
@@ -14,20 +13,54 @@ def setup_stage():
     #Variables
     setup_needed = False
     main_run = False
-    settings_path = "system/settings.json"
-    safety_range = 300  #Tokens to leave as safety margin when calculating max tokens
 
-    #Ensure we have a system folder
-    if not os.path.exists("system/"):
-        os.makedirs("system/")
+    def menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("<-----MENU----->")
+        print(f"<-----1. Max Tokens: {max_tokens}")
+        print(f"<-----2. AI Model: {ai_model}")
+        print(f"<-----3. Base URL: {base_url}")
+        print(f"<-----4. Transcribing Model: {transcribing_model}")
+        print(f"<-----5. User Query: {user_query}")
+        print(f"<-----6. YouTube Links: {youtube_list}")
+        print(f"<-----7. Merge Distance (highly impacts length of video): {merge_distance}")
+        print("<-----0. Boot up with current settings")
+        print("<-----MENU----->")
+
+    def issue_checker(SETTINGS_FILE: str):
+        value_errors = []
+        #Issue here: check with settings["setup_variables"]["max_tokens"]
+        if SETTINGS_FILE["setup_variables"]["max_tokens"] <= 500:
+            value_errors.append("There might be an issue with max tokens being too low or nothing at all.")
+
+        if SETTINGS_FILE["setup_variables"]["ai_model"].strip() == "":
+            value_errors.append("The AI model is not set.")
+
+        if SETTINGS_FILE["setup_variables"]["base_url"].strip() == "":
+            value_errors.append("The AI base URL is not set.")
+        try:
+            interact_w_ai(SETTINGS_FILE["setup_variables"]["base_url"], SETTINGS_FILE["setup_variables"]["ai_model"])
+        except Exception as e:
+            value_errors.append(f"Error interacting with AI: {e}")
+        
+        if SETTINGS_FILE["setup_variables"]["transcribing_model"].strip() == "":
+            value_errors.append("The transcribing model is not set.")
+        
+        if SETTINGS_FILE["setup_variables"]["user_query"].strip() == "":
+            value_errors.append("The user query is not set.")
+        
+        if SETTINGS_FILE["setup_variables"]["youtube_list"] is None:
+            value_errors.append("The youtube list is not set.")
+        
+        if len(value_errors) > 0:
+            for error in value_errors:
+                print("Potential issue: ", error)
 
     #Load settings
-    if not file_exists(settings_path):
+    if not file_exists(SETTINGS_FILE):
         template_settings = {
             "setup_variables": {
                 "max_tokens": 0,
-                "output_folder": "",
-                "input_folder": "",
                 "ai_model": "",
                 "base_url": "",
                 "transcribing_model": "",
@@ -36,10 +69,6 @@ def setup_stage():
                 "merge_distance": 30
             },
             "system_variables": {
-                "version": "1.0.0",
-                "transcribing_name": "transcribed.json",
-                "AI_name": "AI.json",
-                "clips_name": "clips.json",
                 "AI_instructions_w_chunking": '''
                     You are a transcript clip selector.
 
@@ -89,221 +118,137 @@ def setup_stage():
     #Setting up settings if needed
     if setup_needed:
         print("Welcome to the AI Auto Clipper setup!")
-        output_folder = input("Please enter the output folder path: ")
-        if "/" not in output_folder and "\\" not in output_folder:
-            output_folder = output_folder + "/"
-        if not os.path.exists(output_folder):
-            #Create output folder if it doesn't exist
-            os.makedirs(output_folder)
 
-
-        input_folder = input("Please enter the input folder path: ")
-        if "/" not in input_folder and "\\" not in input_folder:
-            input_folder = input_folder + "/"
-        if not os.path.exists(input_folder):
-            #Create input folder if it doesn't exist
-            os.makedirs(input_folder)
-        
         ai_model = input("Please enter the AI model name, copypaste from LM studio (e.g., 'gpt-4o'): ")
-        base_url = input("Please enter the base URL for the AI model (LM studio) Make sure to be running the AI: ")
+        base_url = input("Launch AI and paste the base URL here (e.g., http://localhost:8080): ")
         if "/v1" not in base_url:
             base_url = base_url + "/v1"
         print("Testing AI connection...")
         while True:
             try:
-                interaction = interact_w_ai(base_url, ai_model)
-                print("AI connection successful! We got response: ", interaction)
+                interact_w_ai(base_url, ai_model)
+                print("AI connection successful! We got response: ")
                 break
             except Exception as e:
                 print("AI connection failed. Please check the base URL and model name.")
                 print("Error details: ", str(e))
+            #Waiting a few seconds before retrying
+            print(input("Press Enter to retry..."))
 
         transcribing_models = ["tiny", "base", "small", "medium", "large"]
-        transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
+        transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ").lower()
         while transcribing_model not in transcribing_models:
-            transcribing_model = input(f"Invalid model name. Please choose from {transcribing_models}: ")
+            transcribing_model = input(f"Invalid model name. Please choose from {transcribing_models}: ").lower()
         
         user_query = input("Please enter your query for the AI to choose clips (e.g., 'Find all clips where someone is talking about cats'): ")
-
         print("Finding out how many tokens the AI can handle (This can take some while)...")
         while True:
             try:
-                max_tokens = int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query) - safety_range
+                max_tokens = (int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query))*0.7
                 print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                 break
             except Exception as e:
                 print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
                 print("Error details: ", str(e))
-                max_tokens = int(input("Please input what max tokens is: "))
+                max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query))*0.7
         
-        #Now creating your settings folder and file
-        template_settings["setup_variables"]["max_tokens"] = max_tokens #int
-        template_settings["setup_variables"]["output_folder"] = output_folder #str
-        template_settings["setup_variables"]["input_folder"] = input_folder #str
-        template_settings["setup_variables"]["ai_model"] = ai_model #str
-        template_settings["setup_variables"]["base_url"] = base_url #str
-        template_settings["setup_variables"]["transcribing_model"] = transcribing_model #str
-        template_settings["setup_variables"]["user_query"] = user_query #str
-        template_settings["setup_variables"]["youtube_list"] = [] #list
-        wright(settings_path, template_settings)
-    
-    settings = load(settings_path)
-    skip = input("Are you currently running a session and just want to skip booting stage? (y/N): ").strip().lower()
-    if skip in ["n", "no"]:
+        template_settings["setup_variables"]["max_tokens"] = max_tokens 
+        template_settings["setup_variables"]["ai_model"] = ai_model 
+        template_settings["setup_variables"]["base_url"] = base_url 
+        template_settings["setup_variables"]["transcribing_model"] = transcribing_model 
+        template_settings["setup_variables"]["user_query"] = user_query 
+        template_settings["setup_variables"]["youtube_list"] = [] 
+        wright(SETTINGS_FILE, template_settings)
 
-        #Checking the variables
-        print("Checking your settings for potential issues...")
-        value_errors = []
-        #Issue here: check with settings["setup_variables"]["max_tokens"]
-        if settings["setup_variables"]["max_tokens"] <= 500:
-            value_errors.append("Your AI max tokens setting is too low. Please choose higher capacity AI.")
-        
-        if not os.path.exists(settings["setup_variables"]["output_folder"]):
-            value_errors.append("The specified output folder does not exist: " + settings["setup_variables"]["output_folder"])
-        
-        if not os.path.exists(settings["setup_variables"]["input_folder"]):
-            value_errors.append("The specified input folder does not exist: " + settings["setup_variables"]["input_folder"])
+    current_settings = load(SETTINGS_FILE)
+    max_tokens = current_settings["setup_variables"]["max_tokens"]
+    ai_model = current_settings["setup_variables"]["ai_model"]
+    base_url = current_settings["setup_variables"]["base_url"]
+    transcribing_model = current_settings["setup_variables"]["transcribing_model"]
+    user_query = current_settings["setup_variables"]["user_query"]
+    youtube_list = current_settings["setup_variables"]["youtube_list"]
+    merge_distance = current_settings["setup_variables"]["merge_distance"]
+    menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance)
+    skip = input("Change Settings? (Y/n): ").strip().lower()
+    if skip in ["y", "yes"]:
+        while True:
+            menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance)
 
-        if settings["setup_variables"]["ai_model"].strip() == "":
-            value_errors.append("The AI model is not set.")
-
-        if settings["setup_variables"]["base_url"].strip() == "":
-            value_errors.append("The AI base URL is not set.")
-        
-        if settings["setup_variables"]["transcribing_model"].strip() == "":
-            value_errors.append("The transcribing model is not set.")
-        
-        if settings["setup_variables"]["user_query"].strip() == "":
-            value_errors.append("The user query is not set.")
-        
-        if settings["setup_variables"]["youtube_list"] is None:
-            value_errors.append("The youtube list is not set.")
-        
-        print(f"Found {len(value_errors)} potential issues.\n")
-        if len(value_errors) > 0:
-            for error in value_errors:
-                print("Potential issue: ", error)
-
-        #Boot menu
-        max_tokens = settings["setup_variables"]["max_tokens"]
-        output_folder = settings["setup_variables"]["output_folder"]
-        input_folder = settings["setup_variables"]["input_folder"]
-        ai_model = settings["setup_variables"]["ai_model"]
-        base_url = settings["setup_variables"]["base_url"]
-        transcribing_model = settings["setup_variables"]["transcribing_model"]
-        user_query = settings["setup_variables"]["user_query"]
-        youtube_list = settings["setup_variables"]["youtube_list"]
-        merge_distance = settings["setup_variables"]["merge_distance"]
-
-        answer = input("Would you like to edit some settings before proceeding? (Y/n): ").strip().lower()
-        if answer in ["y", "yes"]:
-            while True:
-                print("Which setting would you like to edit?")
-                print(f"1. Max Tokens: {max_tokens}")
-                print(f"2. Output Folder: {output_folder}")
-                print(f"3. Input Folder: {input_folder}")
-                print(f"4. AI Model: {ai_model}")
-                print(f"5. Base URL: {base_url}")
-                print(f"6. Transcribing Model: {transcribing_model}")
-                print(f"7. User Query: {user_query}")
-                print(f"8. YouTube Links: {youtube_list}")
-                print(f"9. Merge Distance (highly impacts length of video): {merge_distance}")
-                print("0. Boot up with current settings")
-
-                choice = input("Enter the number of your choice: ").strip()
-                if choice == "1":
-                    manual = input("Do you want to manually enter max tokens (Y/n): ").strip().lower()
-                    if manual in ["y", "yes"]:
-                        try:
-                            raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
-                            overhead = (
-                                return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
-                                return_tokens(settings["setup_variables"]["user_query"]) +
-                                safety_range
-                            )
-                            max_tokens = raw_max - overhead
-                            print(f"Effective max_tokens for transcript content: {max_tokens}")
-                        except Exception as e:
-                            print(f"Make sure it's an integer: {e}")
-                    else:
-                        try:
-                            raw_max = max_tokens_ai_check(base_url, ai_model)
-                            overhead = (
-                                return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
-                                return_tokens(user_query) +
-                                safety_range
-                            )
-                            max_tokens = raw_max - overhead
-                            print(f"AI can handle up to {max_tokens} tokens for transcript content.")
-                        except Exception as e:
-                            print(f"AI at its task: {e}")
-                            
-                elif choice == "2":
-                    output_folder = input("Please enter the output folder path: ")
-                    if "/" not in output_folder and "\\" not in output_folder:
-                        output_folder = output_folder + "/"
-                    if not os.path.exists(output_folder):
-                        while not os.path.exists(output_folder):
-                            print("The specified output folder does not exist. Please try again.")
-                            output_folder = input("Please enter the output folder path: ")
-                elif choice == "3":
-                    input_folder = input("Please enter the input folder path: ")
-                    if "/" not in input_folder and "\\" not in input_folder:
-                        input_folder = input_folder + "/"
-                    if not os.path.exists(input_folder):
-                        while not os.path.exists(input_folder):
-                            print("The specified input folder does not exist. Please try again.")
-                            input_folder = input("Please enter the input folder path: ")
-                elif choice == "4":
-                    ai_model = input("Enter new AI Model: ")
-                elif choice == "5":
-                    base_url = input("Enter new Base URL: ")
-                    if "/v1" not in base_url:
-                        base_url = base_url + "/v1"
-                elif choice == "6":
-                    transcribing_model = input("Enter new Transcribing Model: ")
-                elif choice == "7":
-                    user_query = input("Enter new User Query: ")
-                elif choice == "8":
-                    question = input("Would you like to add or create a new list (add/new)?").lower()
-                    if question in ["a", "add"]:
-                        youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
-                        current_youtube_list = settings["setup_variables"]["youtube_list"]
-                        for link in current_youtube_list:
-                            youtube_list.append(link)
-                        new_list = [link.strip() for link in youtube_list_input.split(",")]
-                        for new_link in new_list:
-                            youtube_list.append(new_link)
-                    elif question in ["n", "new"]:
-                        youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
-                        youtube_list = [link.strip() for link in youtube_list_input.split(",")]
-                    else:
-                        print("Please write on of the following n, new, a or add")
-                elif choice == "9":
+            choice = input("Input: ").strip()
+            if choice == "1":
+                manual = input("Do you want to manually enter max tokens (Y/n): ").strip().lower()
+                if manual in ["y", "yes"]:
                     try:
-                        merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
+                        raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
+                        overhead = (
+                            return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
+                            return_tokens(settings["setup_variables"]["user_query"])
+                        )
+                        max_tokens = (raw_max - overhead)*0.7
                     except Exception as e:
-                        print(f"Make sure its an integer: {e}")
-                elif choice == "0":
-                    break
+                        print(f"Make sure it's an integer: {e}")
                 else:
-                    print("Invalid choice. Please try again.")
-                #Save updated settings
-                new_settings = load(settings_path)
-                new_settings["setup_variables"]["max_tokens"] = max_tokens
-                new_settings["setup_variables"]["output_folder"] = output_folder
-                new_settings["setup_variables"]["input_folder"] = input_folder
-                new_settings["setup_variables"]["ai_model"] = ai_model
-                new_settings["setup_variables"]["base_url"] = base_url
-                new_settings["setup_variables"]["transcribing_model"] = transcribing_model
-                new_settings["setup_variables"]["user_query"] = user_query
-                new_settings["setup_variables"]["youtube_list"] = youtube_list
-                new_settings["setup_variables"]["merge_distance"] = merge_distance
-                wright(settings_path, new_settings)
+                    try:
+                        raw_max = max_tokens_ai_check(base_url, ai_model)
+                        overhead = (
+                            return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
+                            return_tokens(user_query)
+                        )
+                        max_tokens = (raw_max - overhead)*0.7
+                        print(f"AI can handle up to {max_tokens} tokens for transcript content.")
+                    except Exception as e:
+                        print(f"AI at its task: {e}")
+                        
+            elif choice == "2":
+                ai_model = input("Enter new AI Model: ")
+            elif choice == "3":
+                base_url = input("Enter new Base URL: ")
+                if "/v1" not in base_url:
+                    base_url = base_url + "/v1"
+            elif choice == "4":
+                transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
+            elif choice == "5":
+                user_query = input("Enter new User Query: ")
+            elif choice == "6":
+                question = input("Would you like to add or create a new list (add/new)?").lower()
+                if question in ["a", "add"]:
+                    youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                    current_youtube_list = settings["setup_variables"]["youtube_list"]
+                    for link in current_youtube_list:
+                        youtube_list.append(link)
+                    new_list = [link.strip() for link in youtube_list_input.split(",")]
+                    for new_link in new_list:
+                        youtube_list.append(new_link)
+                elif question in ["n", "new"]:
+                    youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                    youtube_list = [link.strip() for link in youtube_list_input.split(",")]
+                else:
+                    print("Please write on of the following n, new, a or add")
+            elif choice == "7":
+                try:
+                    merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
+                except Exception as e:
+                    print(f"Make sure its an integer: {e}")
+            elif choice == "0":
+                break
+            else:
+                print("Invalid choice. Please try again.")
+            #Save updated settings
+            new_settings = load(SETTINGS_FILE)
+            new_settings["setup_variables"]["max_tokens"] = max_tokens
+            new_settings["setup_variables"]["ai_model"] = ai_model
+            new_settings["setup_variables"]["base_url"] = base_url
+            new_settings["setup_variables"]["transcribing_model"] = transcribing_model
+            new_settings["setup_variables"]["user_query"] = user_query
+            new_settings["setup_variables"]["youtube_list"] = youtube_list
+            new_settings["setup_variables"]["merge_distance"] = merge_distance
+            wright(SETTINGS_FILE, new_settings)
+            issue_checker(new_settings)
+
                 
 
     print("Booting up...")
-    settings = load(settings_path)
+    settings = load(SETTINGS_FILE)
     base_url = settings["setup_variables"]["base_url"]
     ai_model = settings["setup_variables"]["ai_model"]
     try:

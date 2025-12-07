@@ -10,5 +10,3 @@ def extract_clip(clip: list, video: str, output: str, input: str, id: int):
         output_filename = f"{output}{video[len(input):-4]}{id}.mp4"
 
         subclip.write_videofile(output_filename)
-
-        return output_filename

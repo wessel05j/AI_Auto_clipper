@@ -1,9 +1,6 @@
-# Core dependencies for AI_Auto_clipper
-# Pin exact versions in a separate lock file if needed.
-
 openai-whisper
 openai
 moviepy==1.0.3
 yt_dlp
 tiktoken
-torch  # Install a CPU or CUDA build appropriate for your system
+torch 

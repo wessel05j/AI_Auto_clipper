@@ -4,8 +4,8 @@ def interact_w_ai(base_url: str, ai_model: str):
     client = OpenAI(base_url=base_url, api_key="not-needed")
 
     messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Are we connected?"}
+        {"role": "system", "content": "You are a api connection checker"},
+        {"role": "user", "content": "return nothing"}
     ]
 
     response = client.chat.completions.create(
