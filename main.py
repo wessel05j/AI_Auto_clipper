@@ -28,6 +28,23 @@ def log_fatal_error(message: str, exc: Exception) -> None:
     traceback.print_exc()
     print("====================\n")
 
+def terminal_log(videos_amount: int, current_videos_amount: int, video_name: str, youtube_amount=None, current_youtube_amount=None, youtube_stage=False, transcribing_stage=False, ai_stage=False, clipping_stage=False):
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("======System Log======")
+    if youtube_amount is not None and current_youtube_amount is not None:
+        print(f"Youtube Videos: {current_youtube_amount}/{youtube_amount} ({(current_youtube_amount/youtube_amount)*100:.2f}%)")
+    print(f"Vidoes: {current_videos_amount}/{videos_amount} ({(current_videos_amount/videos_amount)*100:.2f}%)")
+    print(f"Current Video: {video_name}")
+    if youtube_stage:
+        print("Downloading Youtube Video...")
+    if transcribing_stage:
+        print("Transcribing Video...")
+    if ai_stage:
+        print("AI Scanning Video...")
+    if clipping_stage:
+        print("Clipping Video...")
+    print("======================")
+
 def init():
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     SYSTEM_DIR = os.path.join(BASE_DIR, "system")
@@ -69,21 +86,23 @@ def start() -> None:
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
     #--------------------------------------------------------------------------------#
-    if len(youtube_list) > 0:
-        print(f"Downloading {len(youtube_list)} youtube videos...\n")
+    youtube_amount = len(youtube_list)
+    while len(youtube_list) > 0:
+        terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
         try:
             if len(youtube_list) > 10:
                 for link in youtube_list[:10]:
+                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
                     yt_downloader(link, INPUT_DIR)  
                     youtube_list.remove(link)
                     settings = load(SETTINGS_FILE)
                     settings["setup_variables"]["youtube_list"] = youtube_list
                     wright(SETTINGS_FILE, settings)
-                print("Waiting 10 minutes before downloading more videos...")
                 import time
                 time.sleep(600)  
             else:
                 for link in list(youtube_list):
+                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
                     yt_downloader(link, INPUT_DIR)  
                     youtube_list.remove(link)
                     settings = load(SETTINGS_FILE)
@@ -98,24 +117,21 @@ def start() -> None:
     #--------------------------------------------------------------------------------#
 
     videos = scan_videos(INPUT_DIR)
-    iterated = 0
-    print(f"System is 0% finished")
+    VIDEO_AMOUNT = len(videos)
 
     for video in videos:
-        print(video)
         videos_update = scan_videos(INPUT_DIR)
-        print(f"Videos left: {len(videos_update)}")
-        print("Next: ", video)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video)
+
 
         #--------------------------------------------------------------------------------#
         # Transcribing
         #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, transcribing_stage=True)
         try:
             if file_exists(TRANSCRIBING_FILE):
-                print("Already done Transcribing...")
                 transcribed_text = load(TRANSCRIBING_FILE)
             else:
-                print("Transcribing...")
                 transcribed_text = transcribe_video(video, transcribing_model)
                 wright(TRANSCRIBING_FILE, transcribed_text)
         except Exception as e:
@@ -144,12 +160,11 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # AI scanning
         #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, ai_stage=True)
         try:
             if file_exists(AI_FILE):
-                print("Already done AI scanning...")
                 AI_output = load(AI_FILE)
             else:
-                print("AI scanning...")
                 AI_output = []
                 for chunked in chunked_transcribed_text:
                     output = ai_clipping(
@@ -189,15 +204,12 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # Video Clipping
         #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, clipping_stage=True)
         try:
             if file_exists(CLIPS_FILE):
-                print("Continuing Video Clipping...")
                 list_of_clips = load(CLIPS_FILE)
-            else:
-                print("Video Clipping...")
 
             for clip in list(list_of_clips):
-                print(f"Clips left: {len(list_of_clips)}")
                 extract_clip(clip, video, OUTPUT_DIR, INPUT_DIR, len(list_of_clips))
                 list_of_clips.remove(clip)
                 wright(CLIPS_FILE, list_of_clips)
@@ -212,7 +224,6 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # System Cleanup
         #--------------------------------------------------------------------------------#
-        print(f"System is {iterated/len(videos)*100:.0f}% finished!")
         try:
             if os.path.exists(AI_FILE):
                 os.remove(AI_FILE)
@@ -228,8 +239,6 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # System Cleanup
         #--------------------------------------------------------------------------------#
-        iterated += 1
-    print("System finished!")
 
 if __name__ == "__main__":
     init()
