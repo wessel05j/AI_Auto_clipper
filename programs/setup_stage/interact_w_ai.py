@@ -9,7 +9,7 @@ def interact_w_ai(ai_model: str):
     response = ollama.chat(
         model=ai_model,
         messages=messages,
-        options={"temperature": 0}
+        options={"temperature": 0.1}
     )
 
     return response['message']['content']

@@ -3,8 +3,8 @@
 Automated pipeline that
 1. discovers local or YouTube videos,
 2. transcribes them with Whisper,
-3. chunks long transcripts based on *real* LLM tokens,
-4. sends each chunk to an LLM (LM Studio/OpenAI-compatible) to find interesting segments based on a user query,
+3. chunks long transcripts using approximate token estimation,
+4. sends each chunk to a local LLM via Ollama to find interesting segments based on a user query,
 5. merges nearby timestamps, and
 6. exports the matching clips as individual MP4 files.
 
@@ -17,8 +17,8 @@ The whole thing is started from `main.py` and configured interactively – you d
 - Batch video discovery from an input folder you choose.
 - Optional YouTube download step (via `yt_dlp`) into the input folder.
 - Fast transcription via Whisper local models (e.g. `tiny`, `base`, `small`, etc.).
-- Token-aware transcript chunking using `tiktoken` and your model’s max tokens.
-- LLM-guided semantic span extraction via an OpenAI-compatible endpoint (e.g. LM Studio at `http://localhost:1234/v1`).
+- Token-aware transcript chunking using approximate token estimation and your model’s max tokens.
+- LLM-guided semantic span extraction via **Ollama** (local runtime, default at `http://localhost:11434`).
 - Tolerance-based segment merging to avoid fragmented clips.
 - Automatic clip rendering to your output folder using MoviePy.
 
@@ -59,32 +59,35 @@ On first run, `system/settings.json` is created automatically by `setup_stage.py
 ## Requirements
 
 ### Python
-- Python **3.10–3.13** (this project is tested with **3.13**).
+- Python **3.10–3.11** recommended. Newer versions (e.g., 3.12/3.13) may have limited binary wheel support for some packages like `torch`/`moviepy` on Windows.
 
 ### Python packages
 Core runtime dependencies are listed in `requirements.txt`:
 - `openai-whisper` – Whisper transcription.
-- `openai` – OpenAI-compatible client (used for LM Studio / other local servers).
-- `moviepy` – Video clipping.
-- `yt_dlp` – YouTube downloading (optional, only if you use the YouTube feature).
-- `tiktoken` – Token counting for chunking.
+- `ollama` – Local LLM client for chat completion.
+- `moviepy==1.0.3` – Video clipping.
+- `yt_dlp` – YouTube downloading (optional).
 - `torch` – Required by Whisper; install a CPU or GPU build appropriate for your system.
 
 ### System tools
 - **FFmpeg** must be installed and available on `PATH` (required by MoviePy and some Whisper backends).
-- An **OpenAI-compatible LLM server** (e.g. LM Studio) if you want AI‑driven clip selection.
+- **Ollama** (Windows installer) for local LLMs: https://ollama.com/download
+  - After installing, pull your model, e.g.:
+    - `ollama pull gpt-oss:20b`
+  - Verify it works:
+    - `ollama run gpt-oss:20b --prompt "hello"`
 
 #### Recommended installation (Windows / PowerShell)
 ```powershell
-cd d:\Prosjekter\AI_Auto_clipper
+cd d:\Work\Projects\AI_Auto_clipper
 
-"C:\Program Files\python.exe" -m venv .venv   # Python 3.13 path on this machine
+python -m venv .venv
 \.venv\Scripts\Activate.ps1
 
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Example: CPU‑only torch (adjust for your system)
+# Optional: CPU‑only torch (adjust for your system)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
@@ -92,11 +95,10 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 ## Running the Program
 
-1. **Start your LLM server** (LM Studio or similar)
-  - Load a chat model.
-  - Expose it via an OpenAI-compatible server, e.g. LM Studio default:
-    - Base URL: `http://localhost:1234/v1`
-    - Model name: whatever LM Studio reports (copy/paste this string).
+1. **Install and run Ollama**
+  - Install: https://ollama.com/download
+  - Pull a model (example): `ollama pull gpt-oss:20b`
+  - Ensure the Ollama service is running (default `http://localhost:11434`).
 
 2. **Prepare folders**
   - Create an **input folder** for your source videos (e.g. `videos/`).
@@ -114,7 +116,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
   python main.py
   ```
 
-  Or use the provided batch launcher, which can also start LM Studio for you:
+  Or use the provided batch launcher, which sets up venv and installs dependencies:
 
   ```powershell
   .\AI_clipper.bat
@@ -123,13 +125,12 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 5. **Follow the interactive setup** (first run)
   - Output folder path (e.g. `d:\Prosjekter\AI_Auto_clipper\output\`).
   - Input folder path (e.g. `d:\Prosjekter\AI_Auto_clipper\videos\`).
-  - AI model name (from LM Studio, e.g. `gpt-4o-mini` or your local model id).
-  - Base URL (e.g. `http://localhost:1234` – `/v1` is added automatically).
+  - AI model name for Ollama (e.g., `gpt-oss:20b`).
   - Transcribing model (`tiny`, `base`, `small`, `medium`, `large`).
   - User query (e.g. *"Find all clips about mindset and motivation"*).
   - The setup will test the AI connection and query the model for `max_tokens`.
   - Optional: provide a list of YouTube URLs to download before clipping.
-  - Optional: provide the full path to your **LM Studio `.lnk` shortcut** (used by `AI_clipper.bat`).
+  - Ensure Ollama is running and the chosen model is pulled (e.g., `gpt-oss:20b`).
 
 6. **Subsequent runs**
   - On later runs, you’re asked if you want to skip the booting stage.
@@ -154,7 +155,7 @@ For each video:
   - Result is saved as `system/transcribed.json` (list of `[start, end, text]`).
 
 3. **Chunking**
-  - `chunking.py` uses `tiktoken` to split the transcript into chunks based on the LLM’s max tokens (with a safety reserve for responses).
+  - `chunking.py` uses an approximate token counter to split the transcript into chunks based on the LLM’s max tokens (with a safety reserve for responses).
 
 4. **AI scanning**
   - `ai_scanning.py` calls the LLM with a system prompt and your **user query**.
