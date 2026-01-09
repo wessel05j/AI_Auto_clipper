@@ -1,21 +1,18 @@
-def max_tokens_ai_check(base_url: str, ai_model: str):
+def max_tokens_ai_check(ai_model: str):
     from programs.components.return_tokens import return_tokens
-    from openai import OpenAI
+    import ollama
 
-    def ask_ai(base_url: str, ai_model: str, prompt: str):
-        client = OpenAI(base_url=base_url, api_key="not-needed")
+    def ask_ai(ai_model: str, prompt: str):
         messages = [
             {"role": "system", "content": "We are checking your maximum token capacity. Please respond with nothing."},
             {"role": "user", "content": prompt}
             ]
-        return client.chat.completions.create(
+        return ollama.chat(
             model=ai_model,
             messages=messages,
-            temperature=0,
         )
 
     base_chunk = "Hello today is a great day."
-    extra_chunk = " Adding more text to increase token count."
     chunk_count = 100
     step = 100
 
@@ -25,7 +22,7 @@ def max_tokens_ai_check(base_url: str, ai_model: str):
     while True:
         tokens = return_tokens(prompt)
         try:
-            ask_ai(base_url, ai_model, prompt)
+            ask_ai(ai_model, prompt)
             print(f"AI handled {tokens} tokens successfully. Increasing token count...")
             chunk_count += step
             prompt = base_chunk * chunk_count
@@ -37,7 +34,7 @@ def max_tokens_ai_check(base_url: str, ai_model: str):
                 chunk_count -= step
                 prompt = base_chunk * chunk_count
                 try:
-                    ask_ai(base_url, ai_model, prompt)
+                    ask_ai(ai_model, prompt)
                     print(f"AI handled {return_tokens(prompt)} tokens successfully after decreasing.")
                     break
                 except Exception as e2:

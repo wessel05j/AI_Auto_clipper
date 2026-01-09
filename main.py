@@ -71,9 +71,8 @@ def init():
 
     setup_stage(SETTINGS_FILE)
     
-    global settings, base_url, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message
+    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message
     settings = load(SETTINGS_FILE)
-    base_url = settings["setup_variables"]["base_url"]
     model = settings["setup_variables"]["ai_model"]
     transcribing_model = settings["setup_variables"]["transcribing_model"]
     user_query = settings["setup_variables"]["user_query"]
@@ -170,7 +169,6 @@ def start() -> None:
                     output = ai_clipping(
                         chunked,
                         user_query,
-                        base_url,
                         model,
                         chunked_transcribed_text,
                         system_message,

@@ -1,11 +1,4 @@
 def return_tokens(text):
-    import tiktoken
-
-    #Choose encoding
-    encoding = tiktoken.get_encoding("cl100k_base")
-
-    #Encode the text
-    tokenized_text = encoding.encode(text)
-
-    #Return the number of tokens
-    return len(tokenized_text)
+    # Approximate token count (roughly 1 token per 4 characters in English)
+    # This is a simple estimation that works reasonably well for Ollama models
+    return len(text) // 4

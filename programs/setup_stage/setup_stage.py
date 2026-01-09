@@ -14,16 +14,15 @@ def setup_stage(SETTINGS_FILE: str):
     setup_needed = False
     main_run = False
 
-    def menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance):
+    def menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance):
         os.system('cls' if os.name == 'nt' else 'clear')
         print("<-----MENU----->")
         print(f"<-----1. Max Tokens: {max_tokens}")
         print(f"<-----2. AI Model: {ai_model}")
-        print(f"<-----3. Base URL: {base_url}")
-        print(f"<-----4. Transcribing Model: {transcribing_model}")
-        print(f"<-----5. User Query: {user_query}")
-        print(f"<-----6. YouTube Links: {youtube_list}")
-        print(f"<-----7. Merge Distance (highly impacts length of video): {merge_distance}")
+        print(f"<-----3. Transcribing Model: {transcribing_model}")
+        print(f"<-----4. User Query: {user_query}")
+        print(f"<-----5. YouTube Links: {youtube_list}")
+        print(f"<-----6. Merge Distance (highly impacts length of video): {merge_distance}")
         print("<-----0. Boot up with current settings")
         print("<-----MENU----->")
 
@@ -36,10 +35,8 @@ def setup_stage(SETTINGS_FILE: str):
         if SETTINGS_FILE["setup_variables"]["ai_model"].strip() == "":
             value_errors.append("The AI model is not set.")
 
-        if SETTINGS_FILE["setup_variables"]["base_url"].strip() == "":
-            value_errors.append("The AI base URL is not set.")
         try:
-            interact_w_ai(SETTINGS_FILE["setup_variables"]["base_url"], SETTINGS_FILE["setup_variables"]["ai_model"])
+            interact_w_ai(SETTINGS_FILE["setup_variables"]["ai_model"])
         except Exception as e:
             value_errors.append(f"Error interacting with AI: {e}")
         
@@ -62,7 +59,6 @@ def setup_stage(SETTINGS_FILE: str):
             "setup_variables": {
                 "max_tokens": 0,
                 "ai_model": "",
-                "base_url": "",
                 "transcribing_model": "",
                 "user_query": "",
                 "youtube_list": [],
@@ -97,18 +93,15 @@ def setup_stage(SETTINGS_FILE: str):
     if setup_needed:
         print("Welcome to the AI Auto Clipper setup!")
 
-        ai_model = input("Please enter the AI model name, copypaste from LM studio (e.g., 'gpt-4o'): ")
-        base_url = input("Launch AI and paste the base URL here (e.g., http://localhost:8080): ")
-        if "/v1" not in base_url:
-            base_url = base_url + "/v1"
+        ai_model = input("Please enter the Ollama model name (e.g., 'gpt-oss:20b'): ")
         print("Testing AI connection...")
         while True:
             try:
-                interact_w_ai(base_url, ai_model)
-                print("AI connection successful! We got response: ")
+                interact_w_ai(ai_model)
+                print("AI connection successful!")
                 break
             except Exception as e:
-                print("AI connection failed. Please check the base URL and model name.")
+                print("AI connection failed. Please check the model name and ensure Ollama is running.")
                 print("Error details: ", str(e))
             #Waiting a few seconds before retrying
             print(input("Press Enter to retry..."))
@@ -122,7 +115,7 @@ def setup_stage(SETTINGS_FILE: str):
         print("Finding out how many tokens the AI can handle (This can take some while)...")
         while True:
             try:
-                max_tokens = (int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
+                max_tokens = (int(max_tokens_ai_check(ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
                 print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                 break
             except Exception as e:
@@ -132,7 +125,6 @@ def setup_stage(SETTINGS_FILE: str):
         
         template_settings["setup_variables"]["max_tokens"] = max_tokens 
         template_settings["setup_variables"]["ai_model"] = ai_model 
-        template_settings["setup_variables"]["base_url"] = base_url 
         template_settings["setup_variables"]["transcribing_model"] = transcribing_model 
         template_settings["setup_variables"]["user_query"] = user_query 
         template_settings["setup_variables"]["youtube_list"] = [] 
@@ -141,16 +133,15 @@ def setup_stage(SETTINGS_FILE: str):
     current_settings = load(SETTINGS_FILE)
     max_tokens = current_settings["setup_variables"]["max_tokens"]
     ai_model = current_settings["setup_variables"]["ai_model"]
-    base_url = current_settings["setup_variables"]["base_url"]
     transcribing_model = current_settings["setup_variables"]["transcribing_model"]
     user_query = current_settings["setup_variables"]["user_query"]
     youtube_list = current_settings["setup_variables"]["youtube_list"]
     merge_distance = current_settings["setup_variables"]["merge_distance"]
-    menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance)
+    menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance)
     skip = input("Change Settings? (Y/n): ").strip().lower()
     if skip in ["y", "yes"]:
         while True:
-            menu(max_tokens, ai_model, base_url, transcribing_model, user_query, youtube_list, merge_distance)
+            menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance)
 
             choice = input("Input: ").strip()
             if choice == "1":
@@ -167,7 +158,7 @@ def setup_stage(SETTINGS_FILE: str):
                         print(f"Make sure it's an integer: {e}")
                 else:
                     try:
-                        raw_max = max_tokens_ai_check(base_url, ai_model)
+                        raw_max = max_tokens_ai_check(ai_model)
                         overhead = (
                             return_tokens(current_settings["system_variables"]["AI_instruction"]) +
                             return_tokens(user_query)
@@ -180,14 +171,10 @@ def setup_stage(SETTINGS_FILE: str):
             elif choice == "2":
                 ai_model = input("Enter new AI Model: ")
             elif choice == "3":
-                base_url = input("Enter new Base URL: ")
-                if "/v1" not in base_url:
-                    base_url = base_url + "/v1"
-            elif choice == "4":
                 transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
-            elif choice == "5":
+            elif choice == "4":
                 user_query = input("Enter new User Query: ")
-            elif choice == "6":
+            elif choice == "5":
                 question = input("Would you like to add or create a new list (add/new)?").lower()
                 if question in ["a", "add"]:
                     youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
@@ -215,7 +202,6 @@ def setup_stage(SETTINGS_FILE: str):
             new_settings = load(SETTINGS_FILE)
             new_settings["setup_variables"]["max_tokens"] = max_tokens
             new_settings["setup_variables"]["ai_model"] = ai_model
-            new_settings["setup_variables"]["base_url"] = base_url
             new_settings["setup_variables"]["transcribing_model"] = transcribing_model
             new_settings["setup_variables"]["user_query"] = user_query
             new_settings["setup_variables"]["youtube_list"] = youtube_list
@@ -227,12 +213,11 @@ def setup_stage(SETTINGS_FILE: str):
 
     print("Booting up...")
     settings = load(SETTINGS_FILE)
-    base_url = settings["setup_variables"]["base_url"]
     ai_model = settings["setup_variables"]["ai_model"]
     try:
-        interact_w_ai(base_url, ai_model)
+        interact_w_ai(ai_model)
         main_run = True
     except Exception as e:
-        print(f"Error interacting with AI (Make sure the AI service is available): {e}")
+        print(f"Error interacting with AI (Make sure Ollama is running): {e}")
     
     return main_run

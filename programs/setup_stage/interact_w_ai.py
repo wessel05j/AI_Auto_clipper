@@ -1,16 +1,15 @@
-def interact_w_ai(base_url: str, ai_model: str):
-    from openai import OpenAI
-
-    client = OpenAI(base_url=base_url, api_key="not-needed")
+def interact_w_ai(ai_model: str):
+    import ollama
 
     messages = [
         {"role": "system", "content": "You are a api connection checker"},
         {"role": "user", "content": "return nothing"}
     ]
 
-    response = client.chat.completions.create(
+    response = ollama.chat(
         model=ai_model,
-        messages=messages
+        messages=messages,
+        options={"temperature": 0}
     )
 
-    return response.choices[0].message.content
+    return response['message']['content']

@@ -1,6 +1,5 @@
 openai-whisper
-openai
+ollama
 moviepy==1.0.3
 yt_dlp
-tiktoken
 torch 
