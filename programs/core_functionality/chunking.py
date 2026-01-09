@@ -1,7 +1,6 @@
 def chunking(transcribed_text, max_tokens, safety_range=100) -> list:
     import tiktoken
     max_tokens = int(max_tokens)
-    response_reserve = int(response_reserve)
 
     enc = tiktoken.get_encoding("cl100k_base")
 
@@ -29,7 +28,32 @@ def chunking(transcribed_text, max_tokens, safety_range=100) -> list:
 
             current_chunk.append([start, end, text])
             current_tokens += segment_tokens
-            continue
+        else:
+            # Segment is too large - split it into smaller pieces
+            words = text.split()
+            if not words:
+                continue
+            
+            words_per_second = len(words) / max(1, end - start)
+            target_words = max(1, int((max_tokens - safety_range) * 0.8))  # Conservative estimate
+            
+            for i in range(0, len(words), target_words):
+                chunk_words = words[i:i + target_words]
+                chunk_text = " ".join(chunk_words)
+                chunk_start = start + (i / words_per_second) if words_per_second > 0 else start
+                chunk_end = start + ((i + len(chunk_words)) / words_per_second) if words_per_second > 0 else end
+                
+                chunk_segment_text = f"{chunk_start} {chunk_end} {chunk_text}"
+                chunk_tokens = len(enc.encode(chunk_segment_text))
+                
+                if current_tokens + chunk_tokens > max_tokens - safety_range:
+                    if current_chunk:
+                        chunked.append(current_chunk)
+                    current_chunk = []
+                    current_tokens = 0
+                
+                current_chunk.append([chunk_start, chunk_end, chunk_text])
+                current_tokens += chunk_tokens
 
     if current_chunk:
         chunked.append(current_chunk)

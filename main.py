@@ -33,7 +33,8 @@ def terminal_log(videos_amount: int, current_videos_amount: int, video_name: str
     print("======System Log======")
     if youtube_amount is not None and current_youtube_amount is not None:
         print(f"Youtube Videos: {current_youtube_amount}/{youtube_amount} ({(current_youtube_amount/youtube_amount)*100:.2f}%)")
-    print(f"Vidoes: {current_videos_amount}/{videos_amount} ({(current_videos_amount/videos_amount)*100:.2f}%)")
+    if videos_amount is not None and current_videos_amount is not None:
+        print(f"Vidoes: {current_videos_amount}/{videos_amount} ({(current_videos_amount/videos_amount)*100:.2f}%)")
     print(f"Current Video: {video_name}")
     if youtube_stage:
         print("Downloading Youtube Video...")
@@ -70,7 +71,7 @@ def init():
 
     setup_stage(SETTINGS_FILE)
     
-    global settings, base_url, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message_not_chunked, system_message_chunked
+    global settings, base_url, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message
     settings = load(SETTINGS_FILE)
     base_url = settings["setup_variables"]["base_url"]
     model = settings["setup_variables"]["ai_model"]
@@ -79,8 +80,7 @@ def init():
     youtube_list = settings["setup_variables"]["youtube_list"]
     merge_distance = settings["setup_variables"]["merge_distance"]
     max_token = settings["setup_variables"]["max_tokens"]
-    system_message_not_chunked = settings["system_variables"]["AI_instructions"]
-    system_message_chunked = settings["system_variables"]["AI_instructions_w_chunking"]
+    system_message = settings["system_variables"]["AI_instruction"]
 
 def start() -> None:
     #--------------------------------------------------------------------------------#
@@ -173,8 +173,7 @@ def start() -> None:
                         base_url,
                         model,
                         chunked_transcribed_text,
-                        system_message_not_chunked,
-                        system_message_chunked,
+                        system_message,
                     )
                     AI_output.append(output)
                 wright(AI_FILE, AI_output)
@@ -210,7 +209,7 @@ def start() -> None:
                 list_of_clips = load(CLIPS_FILE)
 
             for clip in list(list_of_clips):
-                extract_clip(clip, video, OUTPUT_DIR, INPUT_DIR, len(list_of_clips))
+                extract_clip(clip, video, OUTPUT_DIR, INPUT_DIR, len(list_of_clips), clip[2])
                 list_of_clips.remove(clip)
                 wright(CLIPS_FILE, list_of_clips)
         except Exception as e:

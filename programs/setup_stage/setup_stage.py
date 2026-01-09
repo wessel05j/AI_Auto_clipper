@@ -69,43 +69,21 @@ def setup_stage(SETTINGS_FILE: str):
                 "merge_distance": 30
             },
             "system_variables": {
-                "AI_instructions_w_chunking": '''
+                "AI_instruction": '''
                     You are a transcript clip selector.
 
                     Input:
                     - JSON transcript: [[start, end, "text"], ...] with start/end in seconds.
 
                     Output (strict):
-                    - ONLY JSON: [[start1, end1], [start2, end2], ...]
+                    - ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]
+                    - The third element in each list is a confidence score (0-10) representing how well the clip matches the user query.
                     - No explanations, no extra keys, no comments.
 
                     Rules:
                     - Keep full timestamp precision; do not round.
                     - Each clip must be a complete thought: clear beginning, middle, and end.
-                    - Never start or end in the middle of a word or sentence.
-                    - Prefer natural pauses and paragraph boundaries for cut points.
-                    - Prefer context-rich clips (roughly 30–360 seconds) that clearly match the user query.
-                    - If no segments match the query, return an empty list: [].
-
-                    Chunking:
-                    - You may only see part of the transcript.
-                    - Avoid starting/ending at obvious mid-thought edges of a chunk.
-                    - Never create a clip that uses the very last segment of a transcript chunk.
-                    - If the topic seems to continue beyond what you see, end at the last natural boundary available, not mid-sentence.
-                    ''',
-                "AI_instructions": '''
-                    You are a transcript clip selector.
-
-                    Input:
-                    - JSON transcript: [[start, end, "text"], ...] with start/end in seconds.
-
-                    Output (strict):
-                    - ONLY JSON: [[start1, end1], [start2, end2], ...]
-                    - No explanations, no extra keys, no comments.
-
-                    Rules:
-                    - Keep full timestamp precision; do not round.
-                    - Each clip must be a complete thought: clear beginning, middle, and end.
+                    - The confidence score must be an integer from 0 (poor match) to 10 (perfect match).
                     - Never start or end in the middle of a word or sentence.
                     - Prefer natural pauses and paragraph boundaries for cut points.
                     - Prefer context-rich clips (roughly 30–360 seconds) that clearly match the user query.
@@ -144,13 +122,13 @@ def setup_stage(SETTINGS_FILE: str):
         print("Finding out how many tokens the AI can handle (This can take some while)...")
         while True:
             try:
-                max_tokens = (int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query))*0.7
+                max_tokens = (int(max_tokens_ai_check(base_url, ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
                 print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
                 break
             except Exception as e:
                 print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
                 print("Error details: ", str(e))
-                max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instructions_w_chunking"]) - return_tokens(user_query))*0.7
+                max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
         
         template_settings["setup_variables"]["max_tokens"] = max_tokens 
         template_settings["setup_variables"]["ai_model"] = ai_model 
@@ -181,20 +159,20 @@ def setup_stage(SETTINGS_FILE: str):
                     try:
                         raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
                         overhead = (
-                            return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
-                            return_tokens(settings["setup_variables"]["user_query"])
+                            return_tokens(current_settings["system_variables"]["AI_instruction"]) +
+                            return_tokens(current_settings["setup_variables"]["user_query"])
                         )
-                        max_tokens = (raw_max - overhead)*0.7
+                        max_tokens = (raw_max - overhead)*0.6
                     except Exception as e:
                         print(f"Make sure it's an integer: {e}")
                 else:
                     try:
                         raw_max = max_tokens_ai_check(base_url, ai_model)
                         overhead = (
-                            return_tokens(settings["system_variables"]["AI_instructions_w_chunking"]) +
+                            return_tokens(current_settings["system_variables"]["AI_instruction"]) +
                             return_tokens(user_query)
                         )
-                        max_tokens = (raw_max - overhead)*0.7
+                        max_tokens = (raw_max - overhead)*0.6
                         print(f"AI can handle up to {max_tokens} tokens for transcript content.")
                     except Exception as e:
                         print(f"AI at its task: {e}")

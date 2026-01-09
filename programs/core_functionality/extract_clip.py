@@ -10,16 +10,17 @@ def sanitize_filename(filename: str) -> str:
 
 
 
-def extract_clip(clip: list, video: str, output: str, input: str, id: int):
+def extract_clip(clip: list, video: str, output: str, input: str, id: int, rating: float) -> None:
     from moviepy.editor import VideoFileClip
+    import os
 
-    start_time, end_time = clip
+    start_time, end_time = clip[0], clip[1]
     
     with VideoFileClip(video) as main_video:
         subclip = main_video.subclip(start_time, end_time)
 
-        video_sanitized = sanitize_filename(video)
-        # Single output filename per call
-        output_filename = f"{output}{video_sanitized[len(input):-4]}{id}.mp4"
+        video_basename = os.path.splitext(os.path.basename(video))[0]
+        video_sanitized = sanitize_filename(video_basename)
+        output_filename = os.path.join(output, f"{video_sanitized}_{id}_r{rating}.mp4")
 
         subclip.write_videofile(output_filename)
