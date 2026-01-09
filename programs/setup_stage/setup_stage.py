@@ -8,7 +8,7 @@ def setup_stage(SETTINGS_FILE: str):
     from programs.components.wright import wright
     from programs.components.load import load
     from programs.setup_stage.interact_w_ai import interact_w_ai
-    from programs.setup_stage.max_tokens_ai_check import max_tokens_ai_check
+    from programs.setup_stage.max_tokens_ai_check import ask_ai
 
     #Variables
     setup_needed = False
@@ -112,16 +112,21 @@ def setup_stage(SETTINGS_FILE: str):
             transcribing_model = input(f"Invalid model name. Please choose from {transcribing_models}: ").lower()
         
         user_query = input("Please enter your query for the AI to choose clips (e.g., 'Find all clips where someone is talking about cats'): ")
-        print("Finding out how many tokens the AI can handle (This can take some while)...")
-        while True:
-            try:
-                max_tokens = (int(max_tokens_ai_check(ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
-                print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
-                break
-            except Exception as e:
-                print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
-                print("Error details: ", str(e))
-                max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
+        print("Manually entering max tokens or letting AI determine it (M/A)?")
+        choice = input("Input: ").strip().lower()
+        if choice in ["m", "manual"]:
+            max_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
+            max_tokens = (max_tokens - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
+        else:
+            while True:
+                try:
+                    max_tokens = (int(ask_ai(ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
+                    print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
+                    break
+                except Exception as e:
+                    print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
+                    print("Error details: ", str(e))
+                    max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
         
         template_settings["setup_variables"]["max_tokens"] = max_tokens 
         template_settings["setup_variables"]["ai_model"] = ai_model 
@@ -158,7 +163,7 @@ def setup_stage(SETTINGS_FILE: str):
                         print(f"Make sure it's an integer: {e}")
                 else:
                     try:
-                        raw_max = max_tokens_ai_check(ai_model)
+                        raw_max = ask_ai(ai_model)
                         overhead = (
                             return_tokens(current_settings["system_variables"]["AI_instruction"]) +
                             return_tokens(user_query)
@@ -189,7 +194,7 @@ def setup_stage(SETTINGS_FILE: str):
                     youtube_list = [link.strip() for link in youtube_list_input.split(",")]
                 else:
                     print("Please write on of the following n, new, a or add")
-            elif choice == "7":
+            elif choice == "6":
                 try:
                     merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
                 except Exception as e:

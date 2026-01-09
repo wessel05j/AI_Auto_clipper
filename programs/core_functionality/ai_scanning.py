@@ -25,12 +25,8 @@ def ai_clipping(transcribed_text, user_query, model, chunked_transcribed_text, s
     response = ollama.chat(
         model=model,
         messages=messages,
-        options={"temperature": 0.7,
-                 "num_predict": 1024},
-        think='medium'
+        options={"temperature": 0.7}
     )
-
     raw_output = response['message']['content'].strip()
     parsed_output = json.loads(raw_output)
     return parsed_output
-

@@ -120,13 +120,13 @@ def start() -> None:
 
     for video in videos:
         videos_update = scan_videos(INPUT_DIR)
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video)
 
 
         #--------------------------------------------------------------------------------#
         # Transcribing
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, transcribing_stage=True)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, transcribing_stage=True)
         try:
             if file_exists(TRANSCRIBING_FILE):
                 transcribed_text = load(TRANSCRIBING_FILE)
@@ -146,7 +146,7 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         try:
             print("Chunking...")
-            chunked_transcribed_text = chunking(transcribed_text, max_token, model)
+            chunked_transcribed_text = chunking(transcribed_text, max_token)
             print(f"Chunks created: {len(chunked_transcribed_text)}") 
         except Exception as e:
             log_fatal_error(f"Error during chunking for video {video}.", e)
@@ -159,12 +159,13 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # AI scanning
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, ai_stage=True)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, ai_stage=True)
         try:
             if file_exists(AI_FILE):
                 AI_output = load(AI_FILE)
             else:
                 AI_output = []
+                print("Chunks to scan:", len(chunked_transcribed_text))
                 for chunked in chunked_transcribed_text:
                     output = ai_clipping(
                         chunked,
@@ -201,7 +202,7 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # Video Clipping
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=videos_update, video_name=video, clipping_stage=True)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, clipping_stage=True)
         try:
             if file_exists(CLIPS_FILE):
                 list_of_clips = load(CLIPS_FILE)
