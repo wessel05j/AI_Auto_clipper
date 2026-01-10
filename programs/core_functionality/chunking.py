@@ -1,4 +1,4 @@
-def chunking(transcribed_text, max_tokens, safety_range=100) -> list:
+def chunking(transcribed_text, max_tokens, safety_range=300) -> list:
     from programs.components.return_tokens import return_tokens
     max_tokens = int(max_tokens)
 

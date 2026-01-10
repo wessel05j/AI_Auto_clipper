@@ -5,6 +5,7 @@ programs/setup_stage/__pycache__
 programs/core_functionality/__pycache__
 programs/components/__pycache__
 output/
+input/
 system/transcribed.json
 system/AI.json
 system/Clips.json

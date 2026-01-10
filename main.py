@@ -14,6 +14,7 @@ from programs.components.file_exists import file_exists
 from programs.components.load import load
 from programs.components.wright import wright
 from programs.components.scan_videos import scan_videos
+from programs.components.return_tokens import return_tokens
 
 # Setup stage
 from programs.setup_stage.setup_stage import setup_stage
@@ -34,7 +35,7 @@ def terminal_log(videos_amount: int, current_videos_amount: int, video_name: str
     if youtube_amount is not None and current_youtube_amount is not None:
         print(f"Youtube Videos: {current_youtube_amount}/{youtube_amount} ({(current_youtube_amount/youtube_amount)*100:.2f}%)")
     if videos_amount is not None and current_videos_amount is not None:
-        print(f"Vidoes: {current_videos_amount}/{videos_amount} ({(current_videos_amount/videos_amount)*100:.2f}%)")
+        print(f"Vidoes: {current_videos_amount}/{videos_amount} ({((videos_amount-current_videos_amount)/videos_amount)*100:.2f}%)")
     print(f"Current Video: {video_name}")
     if youtube_stage:
         print("Downloading Youtube Video...")
@@ -81,6 +82,19 @@ def init():
     max_token = settings["setup_variables"]["max_tokens"]
     system_message = settings["system_variables"]["AI_instruction"]
 
+    if os.path.exists(TRANSCRIBING_FILE) or os.path.exists(AI_FILE) or os.path.exists(CLIPS_FILE):
+        print("Warning: Previous session files detected.")
+        print("Press enter to continue or type 'delete' to remove them and start fresh: ")
+        choice = input().strip().lower()
+        if choice == 'delete':
+            if os.path.exists(TRANSCRIBING_FILE):
+                os.remove(TRANSCRIBING_FILE)
+            if os.path.exists(AI_FILE):
+                os.remove(AI_FILE)
+            if os.path.exists(CLIPS_FILE):
+                os.remove(CLIPS_FILE)
+    
+
 def start() -> None:
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
@@ -98,7 +112,7 @@ def start() -> None:
                     settings["setup_variables"]["youtube_list"] = youtube_list
                     wright(SETTINGS_FILE, settings)
                 import time
-                time.sleep(600)  
+                time.sleep(120)  
             else:
                 for link in list(youtube_list):
                     terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
@@ -109,7 +123,7 @@ def start() -> None:
                     wright(SETTINGS_FILE, settings)
         except Exception as e:
             log_fatal_error("Unexpected error in YouTube download loop.", e)
-            return
+            return False
     print("Videos Completed!------------------------------------------------\n")
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
@@ -135,7 +149,7 @@ def start() -> None:
                 wright(TRANSCRIBING_FILE, transcribed_text)
         except Exception as e:
             log_fatal_error(f"Error during transcription for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # Transcribing
         #--------------------------------------------------------------------------------#
@@ -150,7 +164,7 @@ def start() -> None:
             print(f"Chunks created: {len(chunked_transcribed_text)}") 
         except Exception as e:
             log_fatal_error(f"Error during chunking for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # Chunking
         #--------------------------------------------------------------------------------#
@@ -167,6 +181,12 @@ def start() -> None:
                 AI_output = []
                 print("Chunks to scan:", len(chunked_transcribed_text))
                 for chunked in chunked_transcribed_text:
+                    text = ""
+                    for segment in chunked:
+                        tokens_segment_text = f"{segment[0]} {segment[1]} {segment[2]}"
+                        text += tokens_segment_text + "\n"
+                    tokens = return_tokens(text)
+                    print(f"Chunk approx {tokens} tokens...")
                     output = ai_clipping(
                         chunked,
                         user_query,
@@ -178,7 +198,7 @@ def start() -> None:
                 wright(AI_FILE, AI_output)
         except Exception as e:
             log_fatal_error(f"Unexpected error during AI scanning for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # AI scanning
         #--------------------------------------------------------------------------------#
@@ -193,7 +213,7 @@ def start() -> None:
             print(f"Found: {len(list_of_clips)} Clips!")
         except Exception as e:
             log_fatal_error(f"Error during segment merging for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # Segment Cleanup
         #--------------------------------------------------------------------------------#
@@ -213,7 +233,7 @@ def start() -> None:
                 wright(CLIPS_FILE, list_of_clips)
         except Exception as e:
             log_fatal_error(f"Error during video clipping for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # Video Clipping
         #--------------------------------------------------------------------------------#
@@ -233,11 +253,16 @@ def start() -> None:
                 os.remove(video)
         except Exception as e:
             log_fatal_error(f"Error during cleanup for video {video}.", e)
-            return
+            return False
         #--------------------------------------------------------------------------------#
         # System Cleanup
         #--------------------------------------------------------------------------------#
 
 if __name__ == "__main__":
     init()
-    start()
+    system = start()
+    if system is False:
+        print("System initialization failed.")
+    else:
+        print("Processing complete!")
+    input("Press Enter to exit...")

@@ -21,6 +21,6 @@ def extract_clip(clip: list, video: str, output: str, input: str, id: int, ratin
 
         video_basename = os.path.splitext(os.path.basename(video))[0]
         video_sanitized = sanitize_filename(video_basename)
-        output_filename = os.path.join(output, f"{video_sanitized}_{id}_r{rating}.mp4")
+        output_filename = os.path.join(output, f"{video_sanitized}{id}r{rating}.mp4")
 
-        subclip.write_videofile(output_filename)
+        subclip.write_videofile(output_filename, temp_audiofile=os.path.join(output, f"temp_audio_{id}.mp3"))

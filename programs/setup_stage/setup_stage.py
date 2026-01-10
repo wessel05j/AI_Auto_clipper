@@ -23,8 +23,7 @@ def setup_stage(SETTINGS_FILE: str):
         print(f"<-----4. User Query: {user_query}")
         print(f"<-----5. YouTube Links: {youtube_list}")
         print(f"<-----6. Merge Distance (highly impacts length of video): {merge_distance}")
-        print("<-----0. Boot up with current settings")
-        print("<-----MENU----->")
+        print("<-----0. Boot up with current settings\n")
 
     def issue_checker(SETTINGS_FILE: str):
         value_errors = []
@@ -82,7 +81,7 @@ def setup_stage(SETTINGS_FILE: str):
                     - The confidence score must be an integer from 0 (poor match) to 10 (perfect match).
                     - Never start or end in the middle of a word or sentence.
                     - Prefer natural pauses and paragraph boundaries for cut points.
-                    - Prefer context-rich clips (roughly 30–360 seconds) that clearly match the user query.
+                    - Prefer context-rich clips that clearly match the user query.
                     - If no segments match the query, return an empty list: [].
                     '''
             }
@@ -112,21 +111,8 @@ def setup_stage(SETTINGS_FILE: str):
             transcribing_model = input(f"Invalid model name. Please choose from {transcribing_models}: ").lower()
         
         user_query = input("Please enter your query for the AI to choose clips (e.g., 'Find all clips where someone is talking about cats'): ")
-        print("Manually entering max tokens or letting AI determine it (M/A)?")
-        choice = input("Input: ").strip().lower()
-        if choice in ["m", "manual"]:
-            max_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
-            max_tokens = (max_tokens - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
-        else:
-            while True:
-                try:
-                    max_tokens = (int(ask_ai(ai_model)) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
-                    print(f"AI can handle up to {max_tokens} tokens per prompt and response.")
-                    break
-                except Exception as e:
-                    print("Failed to determine max tokens from AI, Trying again... Ai model might be weak at this.")
-                    print("Error details: ", str(e))
-                    max_tokens = (int(input("Please input what max tokens is: ")) - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
+        max_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
+        max_tokens = (max_tokens - return_tokens(template_settings["system_variables"]["AI_instruction"]) - return_tokens(user_query))*0.6
         
         template_settings["setup_variables"]["max_tokens"] = max_tokens 
         template_settings["setup_variables"]["ai_model"] = ai_model 
@@ -143,78 +129,57 @@ def setup_stage(SETTINGS_FILE: str):
     youtube_list = current_settings["setup_variables"]["youtube_list"]
     merge_distance = current_settings["setup_variables"]["merge_distance"]
     menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance)
-    skip = input("Change Settings? (Y/n): ").strip().lower()
-    if skip in ["y", "yes"]:
-        while True:
-            menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance)
+    while True:
+        menu(max_tokens, ai_model, transcribing_model, user_query, youtube_list, merge_distance)
 
-            choice = input("Input: ").strip()
-            if choice == "1":
-                manual = input("Do you want to manually enter max tokens (Y/n): ").strip().lower()
-                if manual in ["y", "yes"]:
-                    try:
-                        raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
-                        overhead = (
-                            return_tokens(current_settings["system_variables"]["AI_instruction"]) +
-                            return_tokens(current_settings["setup_variables"]["user_query"])
-                        )
-                        max_tokens = (raw_max - overhead)*0.6
-                    except Exception as e:
-                        print(f"Make sure it's an integer: {e}")
-                else:
-                    try:
-                        raw_max = ask_ai(ai_model)
-                        overhead = (
-                            return_tokens(current_settings["system_variables"]["AI_instruction"]) +
-                            return_tokens(user_query)
-                        )
-                        max_tokens = (raw_max - overhead)*0.6
-                        print(f"AI can handle up to {max_tokens} tokens for transcript content.")
-                    except Exception as e:
-                        print(f"AI at its task: {e}")
-                        
-            elif choice == "2":
-                ai_model = input("Enter new AI Model: ")
-            elif choice == "3":
-                transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
-            elif choice == "4":
-                user_query = input("Enter new User Query: ")
-            elif choice == "5":
-                question = input("Would you like to add or create a new list (add/new)?").lower()
-                if question in ["a", "add"]:
-                    youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
-                    current_youtube_list = settings["setup_variables"]["youtube_list"]
-                    for link in current_youtube_list:
-                        youtube_list.append(link)
-                    new_list = [link.strip() for link in youtube_list_input.split(",")]
-                    for new_link in new_list:
-                        youtube_list.append(new_link)
-                elif question in ["n", "new"]:
-                    youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
-                    youtube_list = [link.strip() for link in youtube_list_input.split(",")]
-                else:
-                    print("Please write on of the following n, new, a or add")
-            elif choice == "6":
-                try:
-                    merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
-                except Exception as e:
-                    print(f"Make sure its an integer: {e}")
-            elif choice == "0":
-                break
+        choice = input("Input: ").strip()
+        if choice == "1":
+            raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())
+            overhead = (
+                return_tokens(current_settings["system_variables"]["AI_instruction"]) +
+                return_tokens(current_settings["setup_variables"]["user_query"])
+            )
+            max_tokens = (raw_max - overhead)*0.6    
+        elif choice == "2":
+            ai_model = input("Enter new AI Model: ")
+        elif choice == "3":
+            transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ")
+        elif choice == "4":
+            user_query = input("Enter new User Query: ")
+        elif choice == "5":
+            question = input("Would you like to add or create a new list (add/new)?").lower()
+            if question in ["a", "add"]:
+                youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                current_youtube_list = settings["setup_variables"]["youtube_list"]
+                for link in current_youtube_list:
+                    youtube_list.append(link)
+                new_list = [link.strip() for link in youtube_list_input.split(",")]
+                for new_link in new_list:
+                    youtube_list.append(new_link)
+            elif question in ["n", "new"]:
+                youtube_list_input = input("Enter new YouTube Links separated by commas: ").strip()
+                youtube_list = [link.strip() for link in youtube_list_input.split(",")]
             else:
-                print("Invalid choice. Please try again.")
-            #Save updated settings
-            new_settings = load(SETTINGS_FILE)
-            new_settings["setup_variables"]["max_tokens"] = max_tokens
-            new_settings["setup_variables"]["ai_model"] = ai_model
-            new_settings["setup_variables"]["transcribing_model"] = transcribing_model
-            new_settings["setup_variables"]["user_query"] = user_query
-            new_settings["setup_variables"]["youtube_list"] = youtube_list
-            new_settings["setup_variables"]["merge_distance"] = merge_distance
-            wright(SETTINGS_FILE, new_settings)
-            issue_checker(new_settings)
-
-                
+                print("Please write on of the following n, new, a or add")
+        elif choice == "6":
+            try:
+                merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
+            except Exception as e:
+                print(f"Make sure its an integer: {e}")
+        elif choice == "0":
+            break
+        else:
+            print("Invalid choice. Please try again.")
+        #Save updated settings
+        new_settings = load(SETTINGS_FILE)
+        new_settings["setup_variables"]["max_tokens"] = max_tokens
+        new_settings["setup_variables"]["ai_model"] = ai_model
+        new_settings["setup_variables"]["transcribing_model"] = transcribing_model
+        new_settings["setup_variables"]["user_query"] = user_query
+        new_settings["setup_variables"]["youtube_list"] = youtube_list
+        new_settings["setup_variables"]["merge_distance"] = merge_distance
+        wright(SETTINGS_FILE, new_settings)
+        issue_checker(new_settings)
 
     print("Booting up...")
     settings = load(SETTINGS_FILE)
