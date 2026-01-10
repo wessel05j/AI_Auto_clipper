@@ -1,8 +1,5 @@
-# Core dependencies for AI_clipper
-# Pin versions later after validation (`pip freeze > requirements.lock.txt`)
-
 openai-whisper
-openai
+ollama
 moviepy==1.0.3
 yt_dlp
-# torch  # Uncomment and specify version if GPU acceleration needed (e.g. torch==2.3.0+cu121)
+torch 

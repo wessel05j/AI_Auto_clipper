@@ -1,123 +1,268 @@
 import os
-import json
+import traceback
 
-from programs.transcribing import transcribe_video
-from programs.ai_scanning import ai_clipping
-from programs.chunking import chunking
-from programs.merge_segments import merge_segments
-from programs.extract_clip import extract_clip
-from programs.scan_videos import scan_videos
-from programs.variable_checker import variable_checker
-from programs.yt_downloader import yt_downloader
+# Core files
+from programs.core_functionality.yt_downloader import yt_downloader
+from programs.core_functionality.transcribing import transcribe_video
+from programs.core_functionality.chunking import chunking
+from programs.core_functionality.ai_scanning import ai_clipping
+from programs.core_functionality.merge_segments import merge_segments
+from programs.core_functionality.extract_clip import extract_clip
 
-#Variables needed:
-user_query = '''
-    Identify and extract long-form motivational clips (60 seconds or longer). 
-    Only select segments where the speaker is directly addressing the audience in an uplifting, encouraging, or inspiring way. 
-    You may also include interesting or insightful moments, but motivation and audience-directed uplift must be the priority.
-'''
+# Components
+from programs.components.file_exists import file_exists
+from programs.components.load import load
+from programs.components.wright import wright
+from programs.components.scan_videos import scan_videos
+from programs.components.return_tokens import return_tokens
 
-base_url = "http://127.0.0.1:1234/v1"
-model = "openai/gpt-oss-20b"
-clips_input = "videos/"
-clips_output = "output/"
-transcribing_model = "small" #tiny, base, small, medium, large, large-v3, large-v3-turbo
-max_token = 10000 #Max tokens per chunk for AI processing
+# Setup stage
+from programs.setup_stage.setup_stage import setup_stage
 
+def log_fatal_error(message: str, exc: Exception) -> None:
+    """Print a clear fatal error with traceback so the user knows exactly what happened."""
+    print("\n==== FATAL ERROR ====")
+    print(message)
+    print("Error type:", type(exc).__name__)
+    print("Error message:", exc)
+    print("Traceback:")
+    traceback.print_exc()
+    print("====================\n")
 
-#optional youtube downloading:
-youtube_list = []
+def terminal_log(videos_amount: int, current_videos_amount: int, video_name: str, youtube_amount=None, current_youtube_amount=None, youtube_stage=False, transcribing_stage=False, ai_stage=False, clipping_stage=False):
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("======System Log======")
+    if youtube_amount is not None and current_youtube_amount is not None:
+        print(f"Youtube Videos: {current_youtube_amount}/{youtube_amount} ({(current_youtube_amount/youtube_amount)*100:.2f}%)")
+    if videos_amount is not None and current_videos_amount is not None:
+        print(f"Vidoes: {current_videos_amount}/{videos_amount} ({((videos_amount-current_videos_amount)/videos_amount)*100:.2f}%)")
+    print(f"Current Video: {video_name}")
+    if youtube_stage:
+        print("Downloading Youtube Video...")
+    if transcribing_stage:
+        print("Transcribing Video...")
+    if ai_stage:
+        print("AI Scanning Video...")
+    if clipping_stage:
+        print("Clipping Video...")
+    print("======================")
 
-
-#Checking variables to be correct:
-checked = variable_checker(user_query, base_url, model, clips_input, clips_output, transcribing_model, max_token)
-if len(checked) > 0:
-    print(f"Some variables were not declared. Please fix: {checked}")
-    run = False
-else:
-    run = True
-
-while run:
-    #Donwload youtube videos if the user have declared them:
-    videos = scan_videos(clips_input)
-    if len(youtube_list) > 0:
-        for link in youtube_list:
-            yt_downloader(link, clips_input) #Downloading the videos to input folder
+def init():
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    SYSTEM_DIR = os.path.join(BASE_DIR, "system")
+    if not os.path.exists(SYSTEM_DIR):
+        os.makedirs(SYSTEM_DIR)
+    global INPUT_DIR
+    INPUT_DIR = os.path.join(BASE_DIR, "input")
+    if not os.path.exists(INPUT_DIR):
+        os.makedirs(INPUT_DIR)
+    global OUTPUT_DIR
+    OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
     
-    #Collection all videos for clipping:
-    print("Collection videos...")
-    iterated = 0
-    print("System is 0% finished")
-    for video in videos: 
-        videos_update = scan_videos(clips_input)
-        print(f"Videos left: {videos_update}")
-        print("AI_clipper: ", video)
-        #Transcribing:
-        if os.path.exists("system/transcribed.json") and os.path.getsize("system/transcribed.json") > 0:
-            print("Already transcribed...")
-            with open("system/transcribed.json", "r") as f:
-                transcribed_text = json.load(f)
-        else:
-            print("Transcribing...")
-            transcribed_text = transcribe_video(video, transcribing_model)
-            with open("system/transcribed.json", "w") as f:
-                json.dump(transcribed_text, f)
+    global SETTINGS_FILE
+    SETTINGS_FILE = os.path.join(SYSTEM_DIR, "settings.json")
+    global TRANSCRIBING_FILE
+    TRANSCRIBING_FILE = os.path.join(SYSTEM_DIR, "transcribing.json")
+    global AI_FILE
+    AI_FILE = os.path.join(SYSTEM_DIR, "AI.json")
+    global CLIPS_FILE
+    CLIPS_FILE = os.path.join(SYSTEM_DIR, "clips.json")
 
-        #Chunking
-        print("Chunking...")
-        chunked_transcribed_text = chunking(transcribed_text, max_token)
-        print(f"Chunks created: {len(chunked_transcribed_text)}")
-
-        #AI choosen clips:
-        if os.path.exists("system/AI.json") and os.path.getsize("system/AI.json") > 0:
-            print("Already done AI scanning...")
-            with open("system/AI.json", "r") as f:
-                AI_output = json.load(f)
-        else:
-            print("Scanning with AI...")
-            AI_output = []
-            for chunked in chunked_transcribed_text:
-                output = ai_clipping(chunked, user_query, base_url, model, chunked_transcribed_text)
-                # Append a fresh copy to avoid any unintended shared mutations
-                AI_output.append(output)
-            with open("system/AI.json", "w") as f:
-                json.dump(AI_output, f)
-
-        #Segment Cleanup
-        print("Finding AI scanning in transcribed text...")
-        list_of_clips = merge_segments(AI_output, 30)
-        print(f"Found: {len(list_of_clips)} Clips!")
-
-        #Video clipping
-        print(f"Clips left: {len(list_of_clips)}")
-        if os.path.exists("system/Clips.json") and os.path.getsize("system/Clips.json") > 0:
-            print(f"Continuing Clipping...")
-            with open("system/Clips.json", "r") as f:
-                list_of_clips = json.load(f)
-
-        else:
-            print("Starting Clipping...")
-            
-        for clip in list_of_clips[:]:
-            print(f"Clips left: {len(list_of_clips)}")
-            extract_clip(clip, video, clips_output, clips_input, len(list_of_clips))
-            list_of_clips.remove(clip)
-            with open("system/Clips.json", "w") as f:
-                json.dump(list_of_clips, f)
-                
-
-        #System updating
-        iterated += 1
-        print(f"System is {iterated/len(videos)*100:.0f}% finished!")
-        if os.path.exists("system/AI.json"):
-            os.remove("system/AI.json")
-        if os.path.exists("system/transcribed.json"):
-            os.remove("system/transcribed.json")
-        if os.path.exists("system/Clips.json"):
-            os.remove("system/Clips.json")
-        if os.path.exists(video):
-            os.remove(video)
+    setup_stage(SETTINGS_FILE)
     
-    #Shut down after all videos have been iterated
-    print("System finished!")
-    run = False
+    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message
+    settings = load(SETTINGS_FILE)
+    model = settings["setup_variables"]["ai_model"]
+    transcribing_model = settings["setup_variables"]["transcribing_model"]
+    user_query = settings["setup_variables"]["user_query"]
+    youtube_list = settings["setup_variables"]["youtube_list"]
+    merge_distance = settings["setup_variables"]["merge_distance"]
+    max_token = settings["setup_variables"]["max_tokens"]
+    system_message = settings["system_variables"]["AI_instruction"]
+
+    if os.path.exists(TRANSCRIBING_FILE) or os.path.exists(AI_FILE) or os.path.exists(CLIPS_FILE):
+        print("Warning: Previous session files detected.")
+        print("Press enter to continue or type 'delete' to remove them and start fresh: ")
+        choice = input().strip().lower()
+        if choice == 'delete':
+            if os.path.exists(TRANSCRIBING_FILE):
+                os.remove(TRANSCRIBING_FILE)
+            if os.path.exists(AI_FILE):
+                os.remove(AI_FILE)
+            if os.path.exists(CLIPS_FILE):
+                os.remove(CLIPS_FILE)
+    
+
+def start() -> None:
+    #--------------------------------------------------------------------------------#
+    # Youtube Downloading
+    #--------------------------------------------------------------------------------#
+    youtube_amount = len(youtube_list)
+    while len(youtube_list) > 0:
+        terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
+        try:
+            if len(youtube_list) > 10:
+                for link in youtube_list[:10]:
+                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
+                    yt_downloader(link, INPUT_DIR)  
+                    youtube_list.remove(link)
+                    settings = load(SETTINGS_FILE)
+                    settings["setup_variables"]["youtube_list"] = youtube_list
+                    wright(SETTINGS_FILE, settings)
+                import time
+                time.sleep(120)  
+            else:
+                for link in list(youtube_list):
+                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
+                    yt_downloader(link, INPUT_DIR)  
+                    youtube_list.remove(link)
+                    settings = load(SETTINGS_FILE)
+                    settings["setup_variables"]["youtube_list"] = youtube_list
+                    wright(SETTINGS_FILE, settings)
+        except Exception as e:
+            log_fatal_error("Unexpected error in YouTube download loop.", e)
+            return False
+    print("Videos Completed!------------------------------------------------\n")
+    #--------------------------------------------------------------------------------#
+    # Youtube Downloading
+    #--------------------------------------------------------------------------------#
+
+    videos = scan_videos(INPUT_DIR)
+    VIDEO_AMOUNT = len(videos)
+
+    for video in videos:
+        videos_update = scan_videos(INPUT_DIR)
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video)
+
+
+        #--------------------------------------------------------------------------------#
+        # Transcribing
+        #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, transcribing_stage=True)
+        try:
+            if file_exists(TRANSCRIBING_FILE):
+                transcribed_text = load(TRANSCRIBING_FILE)
+            else:
+                transcribed_text = transcribe_video(video, transcribing_model)
+                wright(TRANSCRIBING_FILE, transcribed_text)
+        except Exception as e:
+            log_fatal_error(f"Error during transcription for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # Transcribing
+        #--------------------------------------------------------------------------------#
+
+
+        #--------------------------------------------------------------------------------#
+        # Chunking
+        #--------------------------------------------------------------------------------#
+        try:
+            print("Chunking...")
+            chunked_transcribed_text = chunking(transcribed_text, max_token)
+            print(f"Chunks created: {len(chunked_transcribed_text)}") 
+        except Exception as e:
+            log_fatal_error(f"Error during chunking for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # Chunking
+        #--------------------------------------------------------------------------------#
+
+
+        #--------------------------------------------------------------------------------#
+        # AI scanning
+        #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, ai_stage=True)
+        try:
+            if file_exists(AI_FILE):
+                AI_output = load(AI_FILE)
+            else:
+                AI_output = []
+                print("Chunks to scan:", len(chunked_transcribed_text))
+                for chunked in chunked_transcribed_text:
+                    text = ""
+                    for segment in chunked:
+                        tokens_segment_text = f"{segment[0]} {segment[1]} {segment[2]}"
+                        text += tokens_segment_text + "\n"
+                    tokens = return_tokens(text)
+                    print(f"Chunk approx {tokens} tokens...")
+                    output = ai_clipping(
+                        chunked,
+                        user_query,
+                        model,
+                        chunked_transcribed_text,
+                        system_message,
+                    )
+                    AI_output.append(output)
+                wright(AI_FILE, AI_output)
+        except Exception as e:
+            log_fatal_error(f"Unexpected error during AI scanning for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # AI scanning
+        #--------------------------------------------------------------------------------#
+
+
+        #--------------------------------------------------------------------------------#
+        # Segment Cleanup
+        #--------------------------------------------------------------------------------#
+        try:
+            print("Segment Cleanup...")
+            list_of_clips = merge_segments(AI_output, merge_distance)
+            print(f"Found: {len(list_of_clips)} Clips!")
+        except Exception as e:
+            log_fatal_error(f"Error during segment merging for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # Segment Cleanup
+        #--------------------------------------------------------------------------------#
+
+
+        #--------------------------------------------------------------------------------#
+        # Video Clipping
+        #--------------------------------------------------------------------------------#
+        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, clipping_stage=True)
+        try:
+            if file_exists(CLIPS_FILE):
+                list_of_clips = load(CLIPS_FILE)
+
+            for clip in list(list_of_clips):
+                extract_clip(clip, video, OUTPUT_DIR, INPUT_DIR, len(list_of_clips), clip[2])
+                list_of_clips.remove(clip)
+                wright(CLIPS_FILE, list_of_clips)
+        except Exception as e:
+            log_fatal_error(f"Error during video clipping for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # Video Clipping
+        #--------------------------------------------------------------------------------#
+
+
+        #--------------------------------------------------------------------------------#
+        # System Cleanup
+        #--------------------------------------------------------------------------------#
+        try:
+            if os.path.exists(AI_FILE):
+                os.remove(AI_FILE)
+            if os.path.exists(TRANSCRIBING_FILE):
+                os.remove(TRANSCRIBING_FILE)
+            if os.path.exists(CLIPS_FILE):
+                os.remove(CLIPS_FILE)
+            if os.path.exists(video):
+                os.remove(video)
+        except Exception as e:
+            log_fatal_error(f"Error during cleanup for video {video}.", e)
+            return False
+        #--------------------------------------------------------------------------------#
+        # System Cleanup
+        #--------------------------------------------------------------------------------#
+
+if __name__ == "__main__":
+    init()
+    system = start()
+    if system is False:
+        print("System initialization failed.")
+    else:
+        print("Processing complete!")
+    input("Press Enter to exit...")
