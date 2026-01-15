@@ -1,5 +1,3 @@
-
-
 def sanitize_filename(filename: str) -> str:
     import re
     # Remove or replace problematic characters: < > : " / \ | ? * '
@@ -23,4 +21,11 @@ def extract_clip(clip: list, video: str, output: str, input: str, id: int, ratin
         video_sanitized = sanitize_filename(video_basename)
         output_filename = os.path.join(output, f"{video_sanitized}{id}r{rating}.mp4")
 
-        subclip.write_videofile(output_filename, temp_audiofile=os.path.join(output, f"temp_audio_{id}.mp3"))
+        subclip.write_videofile(
+            output_filename, 
+            temp_audiofile=os.path.join(output, f"temp_audio_{id}.mp4"), # Changed to mp4/m4a
+            remove_temp=True,     # Ensures the temp file is deleted immediately after
+            codec="libx264",      # Explicitly set codec
+            audio_codec="aac",    # Explicitly set audio codec
+            threads=4             # Limit threads to prevent memory spikes
+        )

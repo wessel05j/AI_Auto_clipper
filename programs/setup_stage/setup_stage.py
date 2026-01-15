@@ -65,25 +65,23 @@ def setup_stage(SETTINGS_FILE: str):
             },
             "system_variables": {
                 "AI_instruction": '''
-                    You are a transcript clip selector.
+                You are an expert transcript editor. Your goal is to extract ALL high-quality clips that match the user query.
 
-                    Input:
-                    - JSON transcript: [[start, end, "text"], ...] with start/end in seconds.
+                Input:
+                - JSON transcript: [[start, end, "text"], ...]
 
-                    Output (strict):
-                    - ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]
-                    - The third element in each list is a confidence score (0-10) representing how well the clip matches the user query.
-                    - No explanations, no extra keys, no comments.
+                Output (strict):
+                - ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]
+                - The third element is an integer confidence score (0-10).
+                - No prose, no markdown code blocks, no explanations.
 
-                    Rules:
-                    - Keep full timestamp precision; do not round.
-                    - Each clip must be a complete thought: clear beginning, middle, and end.
-                    - The confidence score must be an integer from 0 (poor match) to 10 (perfect match).
-                    - Never start or end in the middle of a word or sentence.
-                    - Prefer natural pauses and paragraph boundaries for cut points.
-                    - Prefer context-rich clips that clearly match the user query.
-                    - If no segments match the query, return an empty list: [].
-                    '''
+                Rules:
+                1. QUANTITY: Find as many relevant clips as possible (up to 5). Do not stop after the first match.
+                2. BOUNDARIES: Each clip must be a complete thought. Use natural pauses or paragraph breaks. Never cut mid-sentence.
+                3. PRECISION: Use exact timestamps from the input; do not round or estimate.
+                4. SCORING: 10 = perfect match, 5 = good clip, 1 = relevant. 
+                5. FALLBACK: Return an empty list [] only if absolutely no part of the transcript is relevant.
+                '''
             }
         }
         setup_needed = True
