@@ -41,7 +41,29 @@ def init():
         with open(log_file, 'w') as f:
             f.write("")  # Clear file
         logging.info("Log file cleared due to size > 1MB")
-    
+
+    # Clear oldest videos in temp if > 10MB
+    TEMP_DIR = os.path.join(BASE_DIR, "temp")
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+    total_size = 0
+    file_list = []
+    for root, dirs, files in os.walk(TEMP_DIR):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_size = os.path.getsize(file_path)
+            total_size += file_size
+            file_list.append((file_path, file_size, os.path.getctime(file_path)))
+    if total_size > 10 * 1024 * 1024:  # 10MB
+        # Sort by creation time (oldest first)
+        file_list.sort(key=lambda x: x[2])
+        size_freed = 0
+        for file_path, file_size, _ in file_list:
+            os.remove(file_path)
+            size_freed += file_size
+            logging.info(f"Deleted temp file: {file_path} to free up space.")
+            if total_size - size_freed <= 10 * 1024 * 1024:
+                break
     global INPUT_DIR
     INPUT_DIR = os.path.join(BASE_DIR, "input")
     if not os.path.exists(INPUT_DIR):
@@ -50,10 +72,6 @@ def init():
     OUTPUT_DIR = os.path.join(BASE_DIR, "output")
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
-    global TEMP_DIR
-    TEMP_DIR = os.path.join(BASE_DIR, "temp")
-    if not os.path.exists(TEMP_DIR):
-        os.makedirs(TEMP_DIR)
     
     global SETTINGS_FILE
     SETTINGS_FILE = os.path.join(SYSTEM_DIR, "settings.json")
