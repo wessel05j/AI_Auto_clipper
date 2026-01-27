@@ -43,6 +43,7 @@ def init():
         logging.info("Log file cleared due to size > 1MB")
 
     # Clear oldest videos in temp if > 10MB
+    global TEMP_DIR
     TEMP_DIR = os.path.join(BASE_DIR, "temp")
     if not os.path.exists(TEMP_DIR):
         os.makedirs(TEMP_DIR)

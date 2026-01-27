@@ -27,31 +27,31 @@ The whole thing is started from `main.py` and configured interactively – you d
 ## Project Layout
 ```
 AI_Auto_clipper/
-  main.py                     # Orchestrates setup + full pipeline
-  settings.py                 # Interactive settings menu
-  programs/
-   components/
-    file_exists.py          # Tiny helper to check JSON/clip files
-    interact_w_json.py      # Read/write JSON helper
-    load.py                 # JSON load wrapper
-    write.py                # JSON write wrapper
-    return_tokens.py        # Token estimation using tiktoken
-    scan_videos.py          # Collects video file paths from input folder
-   core_functionality/
-    yt_downloader.py        # Downloads YouTube videos to input folder
-    transcribing.py         # Whisper transcription + basic segment merging
-    chunking.py             # Splits transcript into token-sized chunks
-    ai_scanning.py          # LLM call to extract relevant [start, end] spans
-    merge_segments.py       # Merges close timestamp segments
-    extract_clip.py         # Cuts clips using MoviePy
-    ollama_on.py            # Starts Ollama server
-    ollama_off.py           # Stops Ollama server
-    ollama_chat.py          # Chat with Ollama
-    ollama_scanning.py      # Scanning with Ollama
-  system/                     # Settings + temporary JSON artifacts (settings.json, transcribing.json, AI.json, clips.json)
-  input/                      # Input videos
-  output/                     # Generated clips
-  temp/                       # Temp files
+├── main.py                     # Orchestrates setup + full pipeline
+├── settings.py                 # Interactive settings menu
+├── programs/
+│   ├── components/
+│   │   ├── file_exists.py      # Tiny helper to check JSON/clip files
+│   │   ├── interact_w_json.py  # Read/write JSON helper
+│   │   ├── load.py             # JSON load wrapper
+│   │   ├── return_tokens.py    # Token estimation using tiktoken
+│   │   ├── scan_videos.py      # Collects video file paths from input folder
+│   │   └── write.py            # JSON write wrapper
+│   └── core_functionality/
+│       ├── yt_downloader.py    # Downloads YouTube videos to input folder
+│       ├── transcribing.py     # Whisper transcription + basic segment merging
+│       ├── chunking.py         # Splits transcript into token-sized chunks
+│       ├── ollama_scanning.py  # LLM call to extract relevant [start, end] spans
+│       ├── merge_segments.py   # Merges close timestamp segments
+│       ├── extract_clip.py     # Cuts clips using MoviePy
+│       ├── ollama_on.py        # Starts Ollama server
+│       ├── ollama_off.py       # Stops Ollama server
+│       ├── ollama_chat.py      # Chat with Ollama
+│       └── ollama_scanning.py  # Scanning with Ollama
+├── system/                     # Settings + temporary JSON artifacts (settings.json, transcribing.json, AI.json, clips.json)
+├── input/                      # Input videos
+├── output/                     # Generated clips
+└── temp/                       # Temp files
 ```
 
 ---
@@ -106,16 +106,22 @@ If automatic detection fails:
 
 ## Running the Program
 
+### Quick Start (Windows)
+1. Ensure Python 3.10–3.11 is installed.
+2. Install FFmpeg and Ollama as described in Requirements.
+3. Run `main.bat` – it will create a virtual environment, install dependencies, and start the application.
+
+### Manual Setup
 1. **Install Dependencies**
    - Install FFmpeg and Ollama as above.
-   - Run Ollama and pull a model: `ollama pull llama3.2`
+   - Run `pip install -r requirements.txt`
 
-4. **First Run**
+2. **First Run**
    - Run `python settings.py`
    - Follow interactive setup: choose model, query, etc.
    - Settings saved to `system/settings.json`
 
-5. **Subsequent Runs**
+3. **Subsequent Runs**
    - Run `python settings.py` to edit settings.
    - Run `python main.py` to process videos.
 
