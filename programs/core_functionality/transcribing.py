@@ -1,11 +1,10 @@
-def transcribe_video(folder, model_name, merge_seconds=30, min_pause=0.3):
-    import whisper, re
+def transcribe_video(folder, model, min_pause=3.0):
+    import re
 
-    # Load model
-    model = whisper.load_model(model_name)
+    # Use provided model
     result = model.transcribe(folder, verbose=False)
 
-    # Regex for strong sentence ending
+    # Regex for strong sentence ending (includes quotes and spaces)
     strong_end = re.compile(r"[\.!\?]+(?:\"|'|\s|$)")
 
     merged = []
@@ -22,38 +21,34 @@ def transcribe_video(folder, model_name, merge_seconds=30, min_pause=0.3):
             }
             continue
 
-        # --- RULES FOR SAFE MERGING ---
-
-        duration = current["end"] - current["start"]
+        # Calculate the silence gap between segments
         pause = seg["start"] - current["end"]
 
+        # Check if the PREVIOUS chunk ended a sentence
         has_strong_end = bool(strong_end.search(current["text"]))
-        is_short = duration < merge_seconds
-        pause_too_small = pause < min_pause  # avoid merging across big silence
-
-        # Merge conditions:
-        # 1. Current segment is short
-        # 2. Text does NOT end with a strong end
-        # 3. No big pause between segments
-        if is_short and not has_strong_end and pause_too_small:
-            current["end"] = seg["end"]
-            current["text"] = (current["text"] + " " + seg_text).strip()
-        else:
-            # finalize
+        
+        # Logic: If the sentence is finished OR they paused for > 3 seconds, we cut.
+        # Otherwise, we keep building the sentence.
+        if has_strong_end or pause >= min_pause:
+            # finalize the completed sentence/thought
             merged.append([
                 current["start"],
                 current["end"],
                 current["text"].strip()
             ])
 
-            # start new
+            # start a brand new chunk
             current = {
                 "start": seg["start"],
                 "end": seg["end"],
                 "text": seg_text
             }
+        else:
+            # Still in the same thought, extend the end time and append text
+            current["end"] = seg["end"]
+            current["text"] = (current["text"] + " " + seg_text).strip()
 
-    # Append last one
+    # Append the final remaining piece
     if current:
         merged.append([current["start"], current["end"], current["text"].strip()])
 

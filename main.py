@@ -1,6 +1,7 @@
 import os
-import traceback
-
+import time
+import logging
+from tqdm import tqdm
 # Core files
 from programs.core_functionality.yt_downloader import yt_downloader
 from programs.core_functionality.transcribing import transcribe_video
@@ -8,50 +9,40 @@ from programs.core_functionality.chunking import chunking
 from programs.core_functionality.ai_scanning import ai_clipping
 from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
+from programs.core_functionality.ollama_on import ollama_on
+from programs.core_functionality.ollama_off import ollama_off
+from programs.core_functionality.ollama_chat import ollama_chat
+from programs.core_functionality.ollama_scanning import ollama_scanning
 
 # Components
 from programs.components.file_exists import file_exists
 from programs.components.load import load
-from programs.components.wright import wright
+from programs.components.write import write
 from programs.components.scan_videos import scan_videos
-from programs.components.return_tokens import return_tokens
 
-# Setup stage
-from programs.setup_stage.setup_stage import setup_stage
-
-def log_fatal_error(message: str, exc: Exception) -> None:
-    """Print a clear fatal error with traceback so the user knows exactly what happened."""
-    print("\n==== FATAL ERROR ====")
-    print(message)
-    print("Error type:", type(exc).__name__)
-    print("Error message:", exc)
-    print("Traceback:")
-    traceback.print_exc()
-    print("====================\n")
-
-def terminal_log(videos_amount: int, current_videos_amount: int, video_name: str, youtube_amount=None, current_youtube_amount=None, youtube_stage=False, transcribing_stage=False, ai_stage=False, clipping_stage=False):
+def cls():
     os.system('cls' if os.name == 'nt' else 'clear')
-    print("======System Log======")
-    if youtube_amount is not None and current_youtube_amount is not None:
-        print(f"Youtube Videos: {current_youtube_amount}/{youtube_amount} ({(current_youtube_amount/youtube_amount)*100:.2f}%)")
-    if videos_amount is not None and current_videos_amount is not None:
-        print(f"Vidoes: {current_videos_amount}/{videos_amount} ({((videos_amount-current_videos_amount)/videos_amount)*100:.2f}%)")
-    print(f"Current Video: {video_name}")
-    if youtube_stage:
-        print("Downloading Youtube Video...")
-    if transcribing_stage:
-        print("Transcribing Video...")
-    if ai_stage:
-        print("AI Scanning Video...")
-    if clipping_stage:
-        print("Clipping Video...")
-    print("======================")
 
 def init():
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     SYSTEM_DIR = os.path.join(BASE_DIR, "system")
     if not os.path.exists(SYSTEM_DIR):
         os.makedirs(SYSTEM_DIR)
+    
+    # Setup logging
+    log_file = os.path.join(SYSTEM_DIR, "log.txt")
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    # Clear old logs if file > 1MB
+    if os.path.exists(log_file) and os.path.getsize(log_file) > 1024 * 1024:
+        with open(log_file, 'w') as f:
+            f.write("")  # Clear file
+        logging.info("Log file cleared due to size > 1MB")
+    
     global INPUT_DIR
     INPUT_DIR = os.path.join(BASE_DIR, "input")
     if not os.path.exists(INPUT_DIR):
@@ -60,6 +51,10 @@ def init():
     OUTPUT_DIR = os.path.join(BASE_DIR, "output")
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
+    global TEMP_DIR
+    TEMP_DIR = os.path.join(BASE_DIR, "temp")
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
     
     global SETTINGS_FILE
     SETTINGS_FILE = os.path.join(SYSTEM_DIR, "settings.json")
@@ -69,18 +64,28 @@ def init():
     AI_FILE = os.path.join(SYSTEM_DIR, "AI.json")
     global CLIPS_FILE
     CLIPS_FILE = os.path.join(SYSTEM_DIR, "clips.json")
-
-    setup_stage(SETTINGS_FILE)
     
-    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message
-    settings = load(SETTINGS_FILE)
-    model = settings["setup_variables"]["ai_model"]
-    transcribing_model = settings["setup_variables"]["transcribing_model"]
-    user_query = settings["setup_variables"]["user_query"]
-    youtube_list = settings["setup_variables"]["youtube_list"]
-    merge_distance = settings["setup_variables"]["merge_distance"]
-    max_token = settings["setup_variables"]["max_tokens"]
-    system_message = settings["system_variables"]["AI_instruction"]
+    global STATUS_FILE
+    STATUS_FILE = os.path.join(SYSTEM_DIR, "status.json")
+    
+    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message, ai_loops, ollama_url, max_ai_tokens, temperature
+    try:
+        settings = load(SETTINGS_FILE)
+    except FileNotFoundError:
+        print("Settings file not found. Please run 'python settings.py' first to configure the application.")
+        input("Press Enter to exit...")
+        
+    model = settings["ai_model"]
+    transcribing_model = settings["transcribing_model"]
+    user_query = settings["user_query"]
+    system_message = settings["system_query"]
+    max_token = settings["max_tokens"]
+    max_ai_tokens = settings["max_ai_tokens"]
+    youtube_list = settings["youtube_list"]
+    merge_distance = settings["merge_distance"]
+    ai_loops = settings["ai_loops"]
+    ollama_url = settings["ollama_url"]
+    temperature = settings["temperature"]
 
     if os.path.exists(TRANSCRIBING_FILE) or os.path.exists(AI_FILE) or os.path.exists(CLIPS_FILE):
         print("Warning: Previous session files detected.")
@@ -92,64 +97,99 @@ def init():
             if os.path.exists(AI_FILE):
                 os.remove(AI_FILE)
             if os.path.exists(CLIPS_FILE):
-                os.remove(CLIPS_FILE)
-    
+                os.remove(CLIPS_FILE)  
 
 def start() -> None:
+    #Booting procedure
+    print("Botting up")
+    try:
+        print("Loading transcription model...")
+        import whisper
+        import torch
+        if torch.cuda.is_available():
+            print("CUDA device found. Using GPU for transcription.")
+            device = "cuda"
+        else:
+            print("No CUDA device found. Using CPU for transcription.")
+            device = "cpu"
+        model_whisper = whisper.load_model(transcribing_model, device=device)
+        #checking ollama
+        print("Turning ollama on...")
+        ollama_on(ollama_url)
+        print("Trying to communicate with ollama...")
+        response = ollama_chat(
+            model=model,
+            prompt="Do not answer this. This is just a connectivity test.",
+            system_message="Answer briefly with 'Ollama is connected.'",
+            temperature=1.0,
+            think="low",
+            stream=False,
+            max_tokens=50,
+            url=ollama_url,
+        )
+        print(response)
+        print("Ollama communication successful.")
+        print("Ollama will stay on for processing.")
+        print("Running system in")
+        print("3")
+        time.sleep(1)
+        print("2")
+        time.sleep(1)
+        print("1")
+        time.sleep(1)
+        cls()
+    except Exception as e:
+        print(f"Error during booting procedure: {e}")
+        return
+
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
     #--------------------------------------------------------------------------------#
-    youtube_amount = len(youtube_list)
-    while len(youtube_list) > 0:
-        terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
-        try:
-            if len(youtube_list) > 10:
-                for link in youtube_list[:10]:
-                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
-                    yt_downloader(link, INPUT_DIR)  
-                    youtube_list.remove(link)
-                    settings = load(SETTINGS_FILE)
-                    settings["setup_variables"]["youtube_list"] = youtube_list
-                    wright(SETTINGS_FILE, settings)
-                import time
-                time.sleep(120)  
-            else:
+    print(f"Downloading: {len(youtube_list)} youtube links...")
+    try:
+        while len(youtube_list) > 0:
                 for link in list(youtube_list):
-                    terminal_log(videos_amount=None, current_videos_amount=None, video_name="", youtube_amount=youtube_amount, current_youtube_amount=len(youtube_list), youtube_stage=True)
                     yt_downloader(link, INPUT_DIR)  
                     youtube_list.remove(link)
                     settings = load(SETTINGS_FILE)
-                    settings["setup_variables"]["youtube_list"] = youtube_list
-                    wright(SETTINGS_FILE, settings)
-        except Exception as e:
-            log_fatal_error("Unexpected error in YouTube download loop.", e)
-            return False
-    print("Videos Completed!------------------------------------------------\n")
+                    settings["youtube_list"] = youtube_list
+                    write(SETTINGS_FILE, settings)
+        cls()
+    except Exception as e:
+        print(f"Error downloading from YouTube: {e}")
+        return 
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
     #--------------------------------------------------------------------------------#
 
     videos = scan_videos(INPUT_DIR)
-    VIDEO_AMOUNT = len(videos)
-
-    for video in videos:
-        videos_update = scan_videos(INPUT_DIR)
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video)
-
-
+    # Initialize status
+    status = {
+        "total_videos": len(videos),
+        "progress": 0,
+        "current_video": "None",
+        "current_step": "Starting"
+    }
+    write(STATUS_FILE, status)
+    
+    for i, video in enumerate(tqdm(videos, desc="Processing videos", unit="video")):
+        status["current_video"] = os.path.basename(video)
+        status["progress"] = (i / len(videos)) * 100
+        status["current_step"] = "Transcribing"
+        write(STATUS_FILE, status)
         #--------------------------------------------------------------------------------#
         # Transcribing
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, transcribing_stage=True)
+        print("Transcribing...")
         try:
             if file_exists(TRANSCRIBING_FILE):
                 transcribed_text = load(TRANSCRIBING_FILE)
             else:
-                transcribed_text = transcribe_video(video, transcribing_model)
-                wright(TRANSCRIBING_FILE, transcribed_text)
+                transcribed_text = transcribe_video(video, model_whisper)
+                write(TRANSCRIBING_FILE, transcribed_text)
         except Exception as e:
-            log_fatal_error(f"Error during transcription for video {video}.", e)
-            return False
+            logging.error(f"Error during transcribing for video {video}: {e}")
+            continue
         #--------------------------------------------------------------------------------#
         # Transcribing
         #--------------------------------------------------------------------------------#
@@ -158,13 +198,15 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # Chunking
         #--------------------------------------------------------------------------------#
+        print("Chunking...")
+        status["current_step"] = "Chunking"
+        write(STATUS_FILE, status)
         try:
-            print("Chunking...")
             chunked_transcribed_text = chunking(transcribed_text, max_token)
             print(f"Chunks created: {len(chunked_transcribed_text)}") 
         except Exception as e:
-            log_fatal_error(f"Error during chunking for video {video}.", e)
-            return False
+            logging.error(f"Error during chunking for video {video}: {e}")
+            continue
         #--------------------------------------------------------------------------------#
         # Chunking
         #--------------------------------------------------------------------------------#
@@ -173,32 +215,38 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # AI scanning
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, ai_stage=True)
+        print("AI Scanning...")
+        status["current_step"] = "AI Scanning"
+        write(STATUS_FILE, status)
         try:
             if file_exists(AI_FILE):
                 AI_output = load(AI_FILE)
             else:
                 AI_output = []
-                print("Chunks to scan:", len(chunked_transcribed_text))
-                for chunked in chunked_transcribed_text:
+                for chunked in tqdm(chunked_transcribed_text, desc="Scanning chunks", unit="chunk", leave=False):
                     text = ""
                     for segment in chunked:
                         tokens_segment_text = f"{segment[0]} {segment[1]} {segment[2]}"
                         text += tokens_segment_text + "\n"
-                    tokens = return_tokens(text)
-                    print(f"Chunk approx {tokens} tokens...")
-                    output = ai_clipping(
-                        chunked,
-                        user_query,
-                        model,
-                        chunked_transcribed_text,
-                        system_message,
-                    )
-                    AI_output.append(output)
-                wright(AI_FILE, AI_output)
+                    combined_outputs = []
+                    for _ in range(ai_loops):
+                        output = ollama_scanning(
+                            chunked,
+                            user_query,
+                            model,
+                            chunked_transcribed_text,
+                            system_message,
+                            temperature=temperature,
+                            max_tokens=max_ai_tokens,
+                            url=ollama_url
+                        )
+                        if isinstance(output, list) and output:
+                            combined_outputs.extend(output)
+                    AI_output.append(combined_outputs)
+                write(AI_FILE, AI_output)
         except Exception as e:
-            log_fatal_error(f"Unexpected error during AI scanning for video {video}.", e)
-            return False
+            logging.error(f"Error during AI scanning for video {video}: {e}")
+            continue 
         #--------------------------------------------------------------------------------#
         # AI scanning
         #--------------------------------------------------------------------------------#
@@ -207,13 +255,14 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # Segment Cleanup
         #--------------------------------------------------------------------------------#
+        print("Segment Cleanup...")
+        status["current_step"] = "Merging Segments"
+        write(STATUS_FILE, status)
         try:
-            print("Segment Cleanup...")
             list_of_clips = merge_segments(AI_output, merge_distance)
-            print(f"Found: {len(list_of_clips)} Clips!")
         except Exception as e:
-            log_fatal_error(f"Error during segment merging for video {video}.", e)
-            return False
+            logging.error(f"Error during segment cleanup for video {video}: {e}")
+            continue 
         #--------------------------------------------------------------------------------#
         # Segment Cleanup
         #--------------------------------------------------------------------------------#
@@ -222,18 +271,21 @@ def start() -> None:
         #--------------------------------------------------------------------------------#
         # Video Clipping
         #--------------------------------------------------------------------------------#
-        terminal_log(videos_amount=VIDEO_AMOUNT, current_videos_amount=len(videos_update), video_name=video, clipping_stage=True)
+        print("Video Clipping...")
+        status["current_step"] = "Extracting Clips"
+        write(STATUS_FILE, status)
         try:
             if file_exists(CLIPS_FILE):
                 list_of_clips = load(CLIPS_FILE)
 
+            print(f"Clips to extract: {len(list_of_clips)}")
             for clip in list(list_of_clips):
-                extract_clip(clip, video, OUTPUT_DIR, INPUT_DIR, len(list_of_clips), clip[2])
+                extract_clip(clip, video, OUTPUT_DIR, len(list_of_clips), clip[2])
                 list_of_clips.remove(clip)
-                wright(CLIPS_FILE, list_of_clips)
+                write(CLIPS_FILE, list_of_clips)
         except Exception as e:
-            log_fatal_error(f"Error during video clipping for video {video}.", e)
-            return False
+            logging.error(f"Error during video clipping for video {video}: {e}")
+            continue 
         #--------------------------------------------------------------------------------#
         # Video Clipping
         #--------------------------------------------------------------------------------#
@@ -250,19 +302,27 @@ def start() -> None:
             if os.path.exists(CLIPS_FILE):
                 os.remove(CLIPS_FILE)
             if os.path.exists(video):
-                os.remove(video)
+                base_name = os.path.basename(video)
+                temp_video_path = os.path.join(TEMP_DIR, base_name)
+                os.rename(video, temp_video_path)
         except Exception as e:
-            log_fatal_error(f"Error during cleanup for video {video}.", e)
-            return False
+            print(f"Error during system cleanup for video {video}: {e}")
+            return 
         #--------------------------------------------------------------------------------#
         # System Cleanup
         #--------------------------------------------------------------------------------#
 
+    # Update status to completed
+    status["current_step"] = "Completed"
+    status["progress"] = 100
+    write(STATUS_FILE, status)
+
+    # Turn off Ollama after all processing
+    print("Turning Ollama off...")
+    ollama_off()
+    print("Ollama is off.")
+
 if __name__ == "__main__":
     init()
-    system = start()
-    if system is False:
-        print("System initialization failed.")
-    else:
-        print("Processing complete!")
+    start()
     input("Press Enter to exit...")

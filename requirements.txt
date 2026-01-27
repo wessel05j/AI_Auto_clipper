@@ -1,5 +1,11 @@
 openai-whisper
-ollama
 moviepy==1.0.3
 yt_dlp
-torch 
+--index-url https://download.pytorch.org/whl/cu118
+torch
+requests
+tiktoken
+ollama
+tqdm
+flask
+numpy<2

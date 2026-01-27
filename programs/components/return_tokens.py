@@ -1,4 +1,10 @@
 def return_tokens(text):
-    # Approximate token count (roughly 1 token per 4 characters in English)
-    # This is a simple estimation that works reasonably well for Ollama models
-    return len(text) // 3.5
+    import tiktoken
+    # Use tiktoken for better token estimation (approximates for Ollama models)
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 style, reasonable for general use
+        return len(encoding.encode(text))
+    except:
+        # Fallback to approximate count
+        import math
+        return math.floor(len(text) / 3.5)

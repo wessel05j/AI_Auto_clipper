@@ -24,7 +24,6 @@ def merge_segments(segment_list, tolerance):
         start = all_blocks[i][0]
         end = all_blocks[i][1]
         score = all_blocks[i][2]
-        last_start = merged_pile[-1][0]
         last_end = merged_pile[-1][1]
         last_score = merged_pile[-1][2]
 
