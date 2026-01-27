@@ -74,12 +74,34 @@ Install with `pip install -r requirements.txt`:
 - `ollama` – Ollama client.
 - `moviepy==1.0.3` – Video clipping (pinned due to compatibility issues with newer versions).
 - `yt_dlp` – YouTube downloading.
-- `torch==2.0.1` – Required by Whisper (CUDA version for GPU support; requires CUDA 11.8).
+- `torch` – PyTorch (automatically installs CUDA version if CUDA is available).
 - `requests` – HTTP requests.
 - `tiktoken` – Token estimation.
 - `tqdm` – Progress bars.
 - `flask` – Web dashboard.
 - `numpy<2` – NumPy (pinned for compatibility).
+
+---
+
+## CUDA Support
+
+PyTorch (required by Whisper) supports GPU acceleration via CUDA for faster transcription.
+
+### Automatic Detection
+- The `requirements.txt` installs the latest PyTorch version, which automatically detects and uses CUDA if available.
+- Ensure CUDA 11.8 or compatible is installed and on PATH (download from NVIDIA: https://developer.nvidia.com/cuda-downloads).
+- Run `python -c "import torch; print(torch.cuda.is_available())"` to verify.
+
+### Manual Installation
+If automatic detection fails:
+1. Uncomment the `--index-url https://download.pytorch.org/whl/cu118` line in `requirements.txt`.
+2. Run `pip install -r requirements.txt` again.
+3. This forces installation of the CUDA 11.8 compatible PyTorch version.
+
+### Troubleshooting
+- If CUDA is not detected, PyTorch falls back to CPU (slower but functional).
+- For Windows, ensure NVIDIA drivers are up to date.
+- Check GPU memory: Whisper models require 2-8GB VRAM depending on size.
 
 ---
 
