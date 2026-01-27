@@ -132,6 +132,11 @@ def main():
             if choice == "1":
                 try:
                     raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())*0.6
+                    if raw_max <= 0:
+                        print("Max tokens must be a positive integer.")
+                        continue
+                    elif raw_max == False:
+                        continue
                     max_ai_tokens = raw_max*0.4
                     new_settings["max_ai_tokens"] = max_ai_tokens
                     overhead = (
@@ -144,7 +149,7 @@ def main():
                     print(f"Make sure its an integer: {e}")
                     continue 
             elif choice == "2":
-                ai_model = input("Enter new AI Model: ")
+                ai_model = input("Enter new AI Model (Enter to skip): ")
                 if ai_model.strip() == "":
                     continue
                 new_settings["ai_model"] = ai_model
@@ -153,17 +158,20 @@ def main():
                 if transcribing_model in transcribing_models:
                     new_settings["transcribing_model"] = transcribing_model
             elif choice == "4":
-                user_query = input("Enter new User Query: ")
+                user_query = input("Enter new User Query (Enter to skip): ")
                 if user_query.strip() == "":
                     continue
                 new_settings["user_query"] = user_query
             elif choice == "5":
-                system_query = input("Enter new System Query: ")
+                print("NB! System query is not recommended to be changed unless you know what you are doing.")
+                #Printing the current system query for reference
+                print(f"Current System Query:\n{system_query}\n")
+                system_query = input("Enter new System Query (Enter to skip): ")
                 if system_query.strip() == "":
                     continue
                 new_settings["system_query"] = system_query
             elif choice == "6":
-                question = input("Would you like to add or create a new list (add/new)?").lower()
+                question = input("Would you like to add or create a new list (add/new/enter to skip)? ").lower()
                 if question == "":
                     continue
                 elif question in ["a", "add"]:
@@ -189,14 +197,21 @@ def main():
                     print("Please write on of the following n, new, a or add")
             elif choice == "7":
                 try:
-                    merge_distance = int(input("Enter new Merge Distance (highly impacts length of video): ").strip())
+                    merge_distance = int(input("Enter new Merge Distance (highly impacts length of video, enter to skip): ").strip())
+                    if merge_distance == False:
+                        continue
                     new_settings["merge_distance"] = merge_distance
                 except Exception as e:
                     print(f"Make sure its an integer: {e}")
                     continue
             elif choice == "8":
                 try:
-                    ai_loops = int(input("Enter new AI Loops (how many times the AI should scan the transcript): ").strip())
+                    ai_loops = int(input("Enter new AI Loops (how many times the AI should scan the transcript, enter to skip): ").strip())
+                    if ai_loops <= 0:
+                        print("ai_loops cannot be 0 or lower")
+                        continue
+                    elif ai_loops == False:
+                        continue
                     new_settings["ai_loops"] = ai_loops
                 except Exception as e:
                     print(f"Make sure its an integer: {e}")
@@ -204,7 +219,7 @@ def main():
             elif choice == "9":
                 print("Ollama URL is the local or remote address where your Ollama server is hosted.")
                 print("Be precise with the format, including http:// or https:// and the correct port (default is usually 11434).")
-                ollama_url = input("Enter new Ollama URL (e.g., http://localhost:11434/): ").strip()
+                ollama_url = input("Enter new Ollama URL (e.g., http://localhost:11434/), enter to skip: ").strip()
                 if ollama_url == "":
                     continue
                 new_settings["ollama_url"] = ollama_url
@@ -213,16 +228,20 @@ def main():
                     continue
                 else:
                     try:
-                        temperature = float(input("Please enter the temperature for the AI model (0.0 to 1.0, where 0.0 is deterministic and 1.0 is creative): "))
+                        temperature = float(input("Please enter the temperature for the AI model (0.0 to 1.0, where 0.0 is deterministic and 1.0 is creative, enter to skip): "))
                         if temperature < 0.0 or temperature > 1.0:
                             print("Temperature must be between 0.0 and 1.0.")
+                        if temperature == False:
+                            continue
                     except Exception as e:
                         print(f"Invalid input for temperature. Error: {e}")
                 new_settings["temperature"] = temperature
             elif choice == "11":
                 print("Enter the YouTube channel URLs you want to monitor for recent videos using fetch_yt_links.py.")
                 print("Channel URL must have /videos at the end... e.g., https://www.youtube.com/@CheekyCrypto/videos")
-                channels_input = input("Enter YouTube channel URLs to monitor, separated by commas: ").strip()
+                channels_input = input("Enter YouTube channel URLs to monitor, separated by commas, enter to skip: ").strip()
+                if channels_input == "":
+                    continue
                 channels = [link.strip() for link in channels_input.split(",") if link.strip() != ""]
                 for channel in channels:
                     if "/videos" not in channel:
@@ -231,7 +250,9 @@ def main():
                 new_settings["channels"] = channels
             elif choice == "12":
                 try:
-                    channels_hours_limit = int(input("Enter the hours limit to fetch recent videos from channels: ").strip())
+                    channels_hours_limit = int(input("Enter the hours limit to fetch recent videos from channels, enter to skip: ").strip())
+                    if channels_hours_limit == False:
+                        continue
                     new_settings["channels_hours_limit"] = channels_hours_limit
                 except Exception as e:
                     print(f"Make sure its an integer: {e}")

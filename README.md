@@ -87,20 +87,31 @@ Install with `pip install -r requirements.txt`:
 PyTorch (required by Whisper) supports GPU acceleration via CUDA for faster transcription.
 
 ### Automatic Detection
-- The `requirements.txt` installs the latest PyTorch version, which automatically detects and uses CUDA if available.
-- Ensure CUDA 11.8 or compatible is installed and on PATH (download from NVIDIA: https://developer.nvidia.com/cuda-downloads).
-- Run `python -c "import torch; print(torch.cuda.is_available())"` to verify.
+- The `requirements.txt` installs PyTorch with CUDA support if compatible drivers are detected.
+- If CUDA is not available on your system, it falls back to CPU-only PyTorch (slower but functional).
+- To check: After installation, run `python -c "import torch; print(torch.cuda.is_available())"`
+  - If `False`, you're using CPU mode.
 
-### Manual Installation
-If automatic detection fails:
-1. Uncomment the `--index-url https://download.pytorch.org/whl/cu118` line in `requirements.txt`.
-2. Run `pip install -r requirements.txt` again.
-3. This forces installation of the CUDA 11.8 compatible PyTorch version.
+### Manual CUDA Installation
+If automatic detection fails or you installed CUDA after setting up the environment:
+1. Activate the virtual environment: `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Linux/Mac)
+2. Uninstall CPU PyTorch: `pip uninstall torch -y`
+3. Install CUDA PyTorch: `pip install torch==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118`
+4. Verify: `python -c "import torch; print(torch.cuda.is_available())"` should return `True`
+
+### Installing CUDA for GPU Acceleration
+If you have an NVIDIA GPU and want faster transcription:
+1. Check your GPU's CUDA compatibility: https://developer.nvidia.com/cuda-gpus
+2. Download and install CUDA Toolkit 11.8: https://developer.nvidia.com/cuda-11-8-0-download-archive
+3. Install NVIDIA drivers (if not already): https://www.nvidia.com/Download/index.aspx
+4. Restart your system.
+5. Reinstall dependencies: Delete the `venv` folder and run `main.bat` again.
 
 ### Troubleshooting
-- If CUDA is not detected, PyTorch falls back to CPU (slower but functional).
+- If CUDA is not detected after installation, PyTorch falls back to CPU.
 - For Windows, ensure NVIDIA drivers are up to date.
 - Check GPU memory: Whisper models require 2-8GB VRAM depending on size.
+- CPU mode works but is 5-10x slower than GPU.
 
 ---
 
