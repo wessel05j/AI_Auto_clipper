@@ -27,13 +27,14 @@ def main():
             "ollama_url": "http://localhost:11434/",
             "temperature": 0.7,
             "channels": [],
-            "channels_hours_limit": 0
+            "channels_hours_limit": 0,
+            "rerun_temp_files": True
     }
 
     #Variables
     transcribing_models = ["tiny", "base", "small", "medium", "large"]
 
-    def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit):
+    def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files):
         os.system('cls' if os.name == 'nt' else 'clear')
         print("<-----MENU----->")
         print(f"<-----1. Max Tokens: {max_tokens} (rest for model(cannot be changed): {max_ai_tokens})")
@@ -48,6 +49,7 @@ def main():
         print(f"<-----10. Temperature: {temperature}")
         print(f"<-----11. Channels to monitor: {channels}")
         print(f"<-----12. Channel Hours Limit: {channels_hours_limit}")
+        print(f"<-----13. Rerun Temp Files: {rerun_temp_files}")
         print("<-----0. Exit settings\n")
 
     #Setup needed
@@ -125,7 +127,8 @@ def main():
             temperature = current_settings["temperature"]
             channels = current_settings["channels"]
             channels_hours_limit = current_settings["channels_hours_limit"]
-            menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit)
+            rerun_temp_files = current_settings["rerun_temp_files"]
+            menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files)
             new_settings = load(SETTINGS_FILE)
 
             choice = input("Input: ").strip()
@@ -256,6 +259,18 @@ def main():
                     new_settings["channels_hours_limit"] = channels_hours_limit
                 except Exception as e:
                     print(f"Make sure its an integer: {e}")
+                    continue
+            elif choice == "13":
+                print("Rerun Temp Files determines whether the program should reprocess temporary files created during previous runs.")
+                rerun_input = input("Would you like to enable rerunning temp files? (yes/no, enter to skip): ").strip().lower()
+                if rerun_input == "":
+                    continue
+                elif rerun_input in ["yes", "y"]:
+                    new_settings["rerun_temp_files"] = True
+                elif rerun_input in ["no", "n"]:
+                    new_settings["rerun_temp_files"] = False
+                else:
+                    print("Invalid input. Please enter 'yes' or 'no'.")
                     continue
             elif choice == "0":
                 break

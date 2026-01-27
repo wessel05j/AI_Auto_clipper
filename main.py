@@ -92,6 +92,7 @@ def init():
     except FileNotFoundError:
         print("Settings file not found. Please run 'python settings.py' first to configure the application.")
         input("Press Enter to exit...")
+        exit(1)
         
     model = settings["ai_model"]
     transcribing_model = settings["transcribing_model"]
@@ -104,12 +105,14 @@ def init():
     ai_loops = settings["ai_loops"]
     ollama_url = settings["ollama_url"]
     temperature = settings["temperature"]
+    rerun_temp_files = settings["rerun_temp_files"]
 
     if os.path.exists(TRANSCRIBING_FILE) or os.path.exists(AI_FILE) or os.path.exists(CLIPS_FILE):
         print("Warning: Previous session files detected.")
-        print("Press enter to continue or type 'delete' to remove them and start fresh: ")
-        choice = input().strip().lower()
-        if choice == 'delete':
+        if rerun_temp_files:
+            print("Rerun Temp Files is enabled. Previous session files will be reused.")
+        else:
+            print("Rerun Temp Files is disabled. Previous session files will be deleted.")
             if os.path.exists(TRANSCRIBING_FILE):
                 os.remove(TRANSCRIBING_FILE)
             if os.path.exists(AI_FILE):
@@ -137,7 +140,7 @@ def start() -> None:
         print("Trying to communicate with ollama...")
         response = ollama_chat(
             model=model,
-            prompt="Do not answer this. This is just a connectivity test.",
+            prompt="This is just a connectivity test.",
             system_message="Answer briefly with 'Ollama is connected.'",
             temperature=1.0,
             think="low",
