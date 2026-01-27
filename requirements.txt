@@ -1,7 +1,7 @@
 openai-whisper
 moviepy==1.0.3
 yt_dlp
-#--index-url https://download.pytorch.org/whl/cu118
+--index-url https://download.pytorch.org/whl/cu118
 torch
 requests
 tiktoken
