@@ -25,13 +25,15 @@ def main():
             "merge_distance": 0,
             "ai_loops": 0,
             "ollama_url": "http://localhost:11434/",
-            "temperature": 0.7
+            "temperature": 0.7,
+            "channels": [],
+            "channels_hours_limit": 0
     }
 
     #Variables
     transcribing_models = ["tiny", "base", "small", "medium", "large"]
 
-    def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature):
+    def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit):
         os.system('cls' if os.name == 'nt' else 'clear')
         print("<-----MENU----->")
         print(f"<-----1. Max Tokens: {max_tokens} (rest for model(cannot be changed): {max_ai_tokens})")
@@ -44,6 +46,8 @@ def main():
         print(f"<-----8. AI Loops: {ai_loops}")
         print(f"<-----9. Ollama_url: {ollama_url}")
         print(f"<-----10. Temperature: {temperature}")
+        print(f"<-----11. Channels to monitor: {channels}")
+        print(f"<-----12. Channel Hours Limit: {channels_hours_limit}")
         print("<-----0. Exit settings\n")
 
     #Setup needed
@@ -119,7 +123,9 @@ def main():
             ai_loops = current_settings["ai_loops"]
             ollama_url = current_settings["ollama_url"]
             temperature = current_settings["temperature"]
-            menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature)
+            channels = current_settings["channels"]
+            channels_hours_limit = current_settings["channels_hours_limit"]
+            menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit)
             new_settings = load(SETTINGS_FILE)
 
             choice = input("Input: ").strip()
@@ -213,6 +219,23 @@ def main():
                     except Exception as e:
                         print(f"Invalid input for temperature. Error: {e}")
                 new_settings["temperature"] = temperature
+            elif choice == "11":
+                print("Enter the YouTube channel URLs you want to monitor for recent videos using fetch_yt_links.py.")
+                print("Channel URL must have /videos at the end... e.g., https://www.youtube.com/@CheekyCrypto/videos")
+                channels_input = input("Enter YouTube channel URLs to monitor, separated by commas: ").strip()
+                channels = [link.strip() for link in channels_input.split(",") if link.strip() != ""]
+                for channel in channels:
+                    if "/videos" not in channel:
+                        print(f"Channel URL '{channel}' is invalid. It must end with '/videos'. Please try again.")
+                        continue
+                new_settings["channels"] = channels
+            elif choice == "12":
+                try:
+                    channels_hours_limit = int(input("Enter the hours limit to fetch recent videos from channels: ").strip())
+                    new_settings["channels_hours_limit"] = channels_hours_limit
+                except Exception as e:
+                    print(f"Make sure its an integer: {e}")
+                    continue
             elif choice == "0":
                 break
             else:

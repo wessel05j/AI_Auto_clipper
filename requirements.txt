@@ -7,5 +7,4 @@ requests
 tiktoken
 ollama
 tqdm
-flask
 numpy<2

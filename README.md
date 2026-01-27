@@ -78,7 +78,6 @@ Install with `pip install -r requirements.txt`:
 - `requests` – HTTP requests.
 - `tiktoken` – Token estimation.
 - `tqdm` – Progress bars.
-- `flask` – Web dashboard.
 - `numpy<2` – NumPy (pinned for compatibility).
 
 ---
@@ -119,7 +118,6 @@ If automatic detection fails:
 5. **Subsequent Runs**
    - Run `python settings.py` to edit settings.
    - Run `python main.py` to process videos.
-   - Optionally, run `python web.py` and open http://localhost:5000 for progress dashboard.
 
 Output clips in `output/`.
 

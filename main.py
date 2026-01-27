@@ -6,7 +6,6 @@ from tqdm import tqdm
 from programs.core_functionality.yt_downloader import yt_downloader
 from programs.core_functionality.transcribing import transcribe_video
 from programs.core_functionality.chunking import chunking
-from programs.core_functionality.ai_scanning import ai_clipping
 from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 from programs.core_functionality.ollama_on import ollama_on
