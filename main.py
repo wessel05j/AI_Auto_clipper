@@ -250,7 +250,7 @@ def start() -> None:
                         tokens_segment_text = f"{segment[0]} {segment[1]} {segment[2]}"
                         text += tokens_segment_text + "\n"
                     combined_outputs = []
-                    for _ in range(ai_loops):
+                    for _ in tqdm(range(ai_loops), desc="AI loops per chunk", unit="loop", leave=False):
                         output = ollama_scanning(
                             chunked,
                             user_query,
