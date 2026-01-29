@@ -71,7 +71,7 @@ def ollama_chat(
     body = response.json()
     
     # Log the full response for debugging
-    logging.debug(f"Ollama raw response: {json.dumps(body)[:500]}")
+    logging.debug(f"Ollama raw response: {json.dumps(body)}")
     
     # Extract content - handle both chat and completion formats
     content = ""
