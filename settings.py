@@ -20,7 +20,7 @@ def main():
             "ai_model": "",
             "transcribing_model": "",
             "user_query": "",
-            "system_query": "You are an expert transcript editor. Your goal is to extract ALL high-quality clips that match the user query.\n\nInput:\n- JSON transcript: [[start, end, 'text'], ...]\n\nOutput (strict):\n- ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]\n- The third element is an integer confidence score (0-10).\n- No prose, no markdown code blocks, no explanations.\n\nRules:\n1. QUANTITY: Find as many relevant clips as possible (up to 5). Do not stop after the first match.\n2. CONTENT FILTERING: REJECT segments containing ONLY non-verbal sounds (grunts, breathing noises, \"oh\", \"ah\", \"mph\", \"ugh\", music, background noise). ONLY include segments with actual spoken sentences or meaningful phrases that form complete thoughts.\n3. BOUNDARIES: Each clip MUST be a complete thought with a clear ending. End clips at natural sentence boundaries (periods, question marks, exclamation points) followed by a pause. NEVER end mid-sentence or when the speaker is transitioning to a new thought. If you see incomplete context at chunk boundaries, be conservative - end earlier at a complete boundary rather than risk cutting off mid-thought.\n4. PRECISION: Use exact timestamps from the input; do not round or estimate.\n5. SCORING: 10 = perfect match with complete sentences, 5 = good clip with clear boundaries, 1 = relevant but marginal. \n6. FALLBACK: Return an empty list [] if no segments contain actual meaningful speech that matches the query.",
+            "system_query": "You are a JSON clip extractor. You receive a transcript and a user query. You output ONLY a JSON array of clips. Use minimal internal reasoning. Nothing else. No words. No explanation.\n\nYOUR ONLY JOB:\n1. Read the user query to understand what clips to find\n2. Find matching sections in the transcript\n3. Output: [[start, end, score], [start, end, score], ...]\n\nFORMAT RULES:\n- start = number (seconds when clip begins)\n- end = number (seconds when clip ends)\n- score = number 1-10 (how well it matches the user query)\n- All clips go in ONE array\n- Return [] if nothing matches\n\nSTRICT RULES:\n- NEVER write words like 'Here are the clips'\n- NEVER use ``` markdown\n- NEVER put text in the score position (only numbers)\n- ALWAYS start your response with [ and end with ]\n- LONGER clips are better when content is continuous\n\nYou will now receive a transcript and user query. Respond with ONLY the JSON array.",
             "youtube_list": [],
             "merge_distance": 0,
             "ai_loops": 0,
@@ -44,8 +44,8 @@ def main():
     def calculate_ai_tokens(model_name, total_tokens):
         """Calculate max_ai_tokens based on model type"""
         if is_thinking_model(model_name):
-            # Thinking models need 60% for thinking + output
-            return total_tokens * 0.6
+            # Thinking models always get 2000 tokens for thinking + output
+            return 2000
         else:
             # Non-thinking models only need ~300 for output
             return 300

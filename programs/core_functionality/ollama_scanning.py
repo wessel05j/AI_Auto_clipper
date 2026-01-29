@@ -27,31 +27,17 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
 
     responsed = response.strip()
     
-    # Strip thinking model output (e.g., "Thinking...\n...\n...done thinking.\n")
-    if "...done thinking." in responsed.lower():
-        responsed = responsed.split("...done thinking.")[-1].strip()
-    elif "done thinking." in responsed.lower():
-        responsed = responsed.split("done thinking.")[-1].strip()
-    elif "</think>" in responsed.lower():
+    # Strip thinking model output
+    if "</think>" in responsed:
         responsed = responsed.split("</think>")[-1].strip()
-
-    # Strip markdown code blocks
-    if "```json" in responsed:
-        responsed = responsed.split("```json")[-1]
-    if "```" in responsed:
-        responsed = responsed.split("```")[0]
-    
-    # Find the JSON array - extract text starting from first '[' to last ']'
-    start_idx = responsed.find('[')
-    end_idx = responsed.rfind(']')
-    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-        responsed = responsed[start_idx:end_idx + 1]
-    
-    responsed = responsed.strip()
 
     try:
         parsed_output = json.loads(responsed)
+        logging.debug(f"Parsed AI output: {parsed_output}")
         return parsed_output
     except json.JSONDecodeError as e:
-        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed[:100]}")
+        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed}")
+        return []
+    except json.JSONDecodeError as e:
+        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed}")
         return []

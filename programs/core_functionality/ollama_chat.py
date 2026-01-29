@@ -80,8 +80,4 @@ def ollama_chat(
     elif "response" in body:
         content = body["response"]
     
-    # If empty, log a warning with more details
-    if not content.strip():
-        logging.warning(f"Ollama returned empty content. Full response: {json.dumps(body)}")
-    
     return content
