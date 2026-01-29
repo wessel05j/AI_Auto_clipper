@@ -33,6 +33,22 @@ def main():
 
     #Variables
     transcribing_models = ["tiny", "base", "small", "medium", "large"]
+    # Thinking models use tokens for chain-of-thought reasoning
+    thinking_models = ["deepseek-r1", "gpt-oss", "qwq", "o1", "o3"]
+    
+    def is_thinking_model(model_name):
+        """Check if model is a thinking/reasoning model"""
+        model_lower = model_name.lower()
+        return any(tm in model_lower for tm in thinking_models)
+    
+    def calculate_ai_tokens(model_name, total_tokens):
+        """Calculate max_ai_tokens based on model type"""
+        if is_thinking_model(model_name):
+            # Thinking models need 60% for thinking + output
+            return total_tokens * 0.6
+        else:
+            # Non-thinking models only need ~300 for output
+            return 300
 
     def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -69,11 +85,16 @@ def main():
             max_tokens = 0
             while max_tokens <= 0:
                 try:
-                    max_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
-                    while max_tokens <= 0:
-                        max_tokens = int(input("Max tokens must be a positive integer. Please enter again: "))
-                    max_ai_tokens = max_tokens*0.4
-                    max_tokens = (max_tokens*0.6 - (return_tokens(template_settings["system_query"]) + return_tokens(user_query)))
+                    total_model_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
+                    while total_model_tokens <= 0:
+                        total_model_tokens = int(input("Max tokens must be a positive integer. Please enter again: "))
+                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
+                    overhead = return_tokens(template_settings["system_query"]) + return_tokens(user_query)
+                    max_tokens = total_model_tokens - max_ai_tokens - overhead
+                    if is_thinking_model(ai_model):
+                        print(f"Thinking model detected. Reserving {int(max_ai_tokens)} tokens for thinking + output.")
+                    else:
+                        print(f"Non-thinking model detected. Reserving {int(max_ai_tokens)} tokens for output.")
                 except Exception as e:
                     print(f"Invalid input for max tokens. Error: {e}")
             merge_distance = 0
@@ -134,20 +155,23 @@ def main():
             choice = input("Input: ").strip()
             if choice == "1":
                 try:
-                    raw_max = int(input("Enter new Max Tokens (total model limit): ").strip())*0.6
-                    if raw_max <= 0:
+                    total_model_tokens = int(input("Enter new Max Tokens (total model limit): ").strip())
+                    if total_model_tokens <= 0:
                         print("Max tokens must be a positive integer.")
                         continue
-                    elif raw_max == False:
-                        continue
-                    max_ai_tokens = raw_max*0.4
+                    current_model = new_settings["ai_model"]
+                    max_ai_tokens = calculate_ai_tokens(current_model, total_model_tokens)
                     new_settings["max_ai_tokens"] = max_ai_tokens
                     overhead = (
                     return_tokens(current_settings["system_query"]) +
                     return_tokens(current_settings["user_query"])
                     )
-                    max_tokens = (raw_max - overhead)
-                    new_settings["max_tokens"] = max_tokens 
+                    max_tokens = total_model_tokens - max_ai_tokens - overhead
+                    new_settings["max_tokens"] = max_tokens
+                    if is_thinking_model(current_model):
+                        print(f"Thinking model. Reserved {int(max_ai_tokens)} tokens for thinking + output.")
+                    else:
+                        print(f"Non-thinking model. Reserved {int(max_ai_tokens)} tokens for output.")
                 except Exception as e:
                     print(f"Make sure its an integer: {e}")
                     continue 
@@ -156,6 +180,15 @@ def main():
                 if ai_model.strip() == "":
                     continue
                 new_settings["ai_model"] = ai_model
+                # Recalculate max_ai_tokens for new model type
+                old_total = new_settings["max_tokens"] + new_settings["max_ai_tokens"] + return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
+                new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model, old_total)
+                overhead = return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
+                new_settings["max_tokens"] = old_total - new_settings["max_ai_tokens"] - overhead
+                if is_thinking_model(ai_model):
+                    print(f"Thinking model. Reserved {int(new_settings['max_ai_tokens'])} tokens for thinking + output.")
+                else:
+                    print(f"Non-thinking model. Reserved {int(new_settings['max_ai_tokens'])} tokens for output.")
             elif choice == "3":
                 transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ").lower()
                 if transcribing_model in transcribing_models:

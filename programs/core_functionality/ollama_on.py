@@ -2,6 +2,7 @@ import subprocess
 import time
 import requests
 import os
+import logging
 
 def ollama_on(url="http://localhost:11434/"):
     '''Wakes up the Ollama local server if it's not already running.
@@ -13,9 +14,9 @@ def ollama_on(url="http://localhost:11434/"):
     try:
         # Check if Ollama is already awake
         requests.get(url)
-        print("Ollama is already running.")
+        logging.debug("Ollama is already running.")
     except requests.exceptions.ConnectionError:
-        print("Ollama not found. Waking it up...")
+        logging.info("Ollama not found. Waking it up...")
         
         # Set environment to reduce logging
         env = os.environ.copy()
@@ -33,10 +34,10 @@ def ollama_on(url="http://localhost:11434/"):
         for i in range(10):
             try:
                 requests.get(url)
-                print("Ollama is now awake and ready!")
+                logging.info("Ollama is now awake and ready!")
                 return True
             except requests.exceptions.ConnectionError:
                 time.sleep(1)
         
-        print("Failed to start Ollama. Please check your installation.")
+        logging.error("Failed to start Ollama. Please check your installation.")
         return False

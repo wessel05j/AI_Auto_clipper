@@ -1,5 +1,6 @@
 from programs.core_functionality.ollama_chat import ollama_chat
 import json
+import logging
 
 def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_text, system_message, temperature, max_tokens, url):
     '''Runs through a chunk of transcribed text and uses Ollama to find relevant clips.'''
@@ -21,17 +22,36 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
         temperature=temperature,
         stream=False,
         max_tokens=max_tokens,
-        url=url
+        url=url,
     )
 
     responsed = response.strip()
+    
+    # Strip thinking model output (e.g., "Thinking...\n...\n...done thinking.\n")
+    if "...done thinking." in responsed.lower():
+        responsed = responsed.split("...done thinking.")[-1].strip()
+    elif "done thinking." in responsed.lower():
+        responsed = responsed.split("done thinking.")[-1].strip()
+    elif "</think>" in responsed.lower():
+        responsed = responsed.split("</think>")[-1].strip()
 
-    if responsed.startswith("```json"):
-        responsed = responsed[7:]
-    if responsed.startswith("```"):
-        responsed = responsed[3:]
-    if responsed.endswith("```"):
-        responsed = responsed[:-3]
+    # Strip markdown code blocks
+    if "```json" in responsed:
+        responsed = responsed.split("```json")[-1]
+    if "```" in responsed:
+        responsed = responsed.split("```")[0]
+    
+    # Find the JSON array - extract text starting from first '[' to last ']'
+    start_idx = responsed.find('[')
+    end_idx = responsed.rfind(']')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        responsed = responsed[start_idx:end_idx + 1]
+    
+    responsed = responsed.strip()
 
-    parsed_output = json.loads(responsed)
-    return parsed_output
+    try:
+        parsed_output = json.loads(responsed)
+        return parsed_output
+    except json.JSONDecodeError as e:
+        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed[:100]}")
+        return []

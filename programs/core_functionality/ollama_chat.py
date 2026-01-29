@@ -1,6 +1,8 @@
 from typing import Optional
 import json
 import requests
+import logging
+
 def ollama_chat(
     model: str,
     prompt: str,
@@ -67,5 +69,19 @@ def ollama_chat(
         return "".join(chunks)
 
     body = response.json()
-    # Prefer the chat-style response envelope, fallback to the legacy key.
-    return body.get("message", {}).get("content", body.get("response", ""))
+    
+    # Log the full response for debugging
+    logging.debug(f"Ollama raw response: {json.dumps(body)[:500]}")
+    
+    # Extract content - handle both chat and completion formats
+    content = ""
+    if "message" in body and "content" in body["message"]:
+        content = body["message"]["content"]
+    elif "response" in body:
+        content = body["response"]
+    
+    # If empty, log a warning with more details
+    if not content.strip():
+        logging.warning(f"Ollama returned empty content. Full response: {json.dumps(body)}")
+    
+    return content

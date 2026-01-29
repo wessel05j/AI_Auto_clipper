@@ -1,4 +1,5 @@
 import subprocess
+import logging
 
 def ollama_off():
     """
@@ -17,9 +18,9 @@ def ollama_off():
         )
         
         if result.returncode == 0:
-            print("Successfully terminated Ollama. Memory has been reclaimed.")
+            logging.debug("Successfully terminated Ollama. Memory has been reclaimed.")
         else:
-            print("Ollama was not running.")
+            logging.debug("Ollama was not running.")
             
     except Exception as e:
-        print(f"An error occurred while trying to kill the process: {e}")
+        logging.error(f"An error occurred while trying to kill the process: {e}")
