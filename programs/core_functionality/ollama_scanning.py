@@ -7,11 +7,12 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
         system_message = system_message
     else:
         system_message += '''
-            Chunking:
-            - You may only see part of the transcript.
-            - Avoid starting/ending at obvious mid-thought edges of a chunk.
-            - Never create a clip that uses the very last segment of a transcript chunk.
-            - If the topic seems to continue beyond what you see, end at the last natural boundary available, not mid-sentence.'''
+            Chunking Context:
+            - You are viewing only ONE chunk of a larger transcript.
+            - Segments at the chunk edges may be incomplete thoughts.
+            - NEVER create clips using the final 2-3 segments of this chunk - they may continue into the next chunk.
+            - ALWAYS end clips at clear sentence boundaries with proper punctuation (. ! ?) followed by a pause.
+            - If context appears incomplete, end conservatively at the last confirmed complete sentence.'''
 
     response = ollama_chat(
         model=model,
