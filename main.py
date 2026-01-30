@@ -171,18 +171,18 @@ def start() -> None:
     # Youtube Downloading
     #--------------------------------------------------------------------------------#
     logging.info(f"Downloading: {len(youtube_list)} youtube links...")
-    try:
-        while len(youtube_list) > 0:
-                for link in list(youtube_list):
-                    yt_downloader(link, INPUT_DIR)  
-                    youtube_list.remove(link)
-                    settings = load(SETTINGS_FILE)
-                    settings["youtube_list"] = youtube_list
-                    write(SETTINGS_FILE, settings)
-        cls()
-    except Exception as e:
-        logging.error(f"Error downloading from YouTube: {e}")
-        return 
+    while len(youtube_list) > 0:
+        for link in list(youtube_list):
+            try:
+                yt_downloader(link, INPUT_DIR)
+                youtube_list.remove(link)
+                settings = load(SETTINGS_FILE)
+                settings["youtube_list"] = youtube_list
+                write(SETTINGS_FILE, settings)
+            except Exception as e:
+                logging.error(f"Error downloading {link}: {e}. Continuing to next video.")
+                continue
+    cls() 
     #--------------------------------------------------------------------------------#
     # Youtube Downloading
     #--------------------------------------------------------------------------------#

@@ -1,18 +1,8 @@
 import yt_dlp
 from datetime import datetime, timedelta
 import os
-import random
-import time
 from programs.components.load import load
 from programs.components.write import write
-
-# Random User-Agents to avoid detection
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-]
 
 
 
@@ -42,7 +32,6 @@ def main()  :
             'ignoreerrors': True,
             'no_warnings': True,
             'socket_timeout': 30,  # timeout for network operations
-            'http_headers': {'User-Agent': random.choice(USER_AGENTS)},
         }
 
         print(f"Searching for videos uploaded after: {threshold.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -58,12 +47,6 @@ def main()  :
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             for i, channel_url in enumerate(channels):
-                # Random delay between channels (10-30 seconds), skip first
-                if i > 0:
-                    delay = random.randint(10, 30)
-                    print(f"Waiting {delay}s before next channel...")
-                    time.sleep(delay)
-                
                 print(f"Checking: {channel_url}")
                 result = ydl.extract_info(channel_url, download=False)
 
@@ -78,11 +61,8 @@ def main()  :
 
                     # If flat data lacks time, fetch lightweight info for this item only
                     if not video_time:
-                        try:
-                            info = ydl.extract_info(entry.get('url'), download=False)
-                            video_time = parse_time(info or {})
-                        except Exception:
-                            video_time = None
+                        info = ydl.extract_info(entry.get('url'), download=False)
+                        video_time = parse_time(info or {})
 
                     if not video_time:
                         continue  # skip items without reliable time
