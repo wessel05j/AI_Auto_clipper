@@ -15,6 +15,7 @@ def main():
         os.makedirs(SYSTEM_DIR)
     SETTINGS_FILE = os.path.join(SYSTEM_DIR, "settings.json")
     settings_data_contract = {
+            "total_tokens": 0,
             "max_tokens": 0,
             "max_ai_tokens": 0,
             "ai_model": "",
@@ -41,11 +42,10 @@ def main():
         model_lower = model_name.lower()
         return any(tm in model_lower for tm in thinking_models)
     
-    def calculate_ai_tokens(model_name, total_tokens):
+    def calculate_ai_tokens(model_name, max_total_tokens):
         """Calculate max_ai_tokens based on model type"""
         if is_thinking_model(model_name):
-            # Thinking models always get 2000 tokens for thinking + output
-            return 2000
+            return max_total_tokens*0.6
         else:
             # Non-thinking models only need ~300 for output
             return 300
@@ -76,6 +76,8 @@ def main():
             print("Welcome to the AI Auto Clipper setup!")
 
             ai_model = input("Please enter the EXACT Ollama model name (e.g., 'gpt-oss:20b'): ")
+            if is_thinking_model(ai_model):
+                print("Thinking model detected. For optimal performance with larger chunks, consider setting total tokens to 12000 or higher.")
             transcribing_model = input("Please enter the transcribing model name (e.g.,'tiny', 'base', 'small', 'medium', 'large'): ").lower()
             while transcribing_model not in transcribing_models:
                 transcribing_model = input(f"Invalid model name. Please choose from {transcribing_models}: ").lower()
@@ -88,8 +90,9 @@ def main():
                     total_model_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
                     while total_model_tokens <= 0:
                         total_model_tokens = int(input("Max tokens must be a positive integer. Please enter again: "))
-                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
+                    total_tokens = total_model_tokens
                     overhead = return_tokens(template_settings["system_query"]) + return_tokens(user_query)
+                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
                     max_tokens = total_model_tokens - max_ai_tokens - overhead
                     if is_thinking_model(ai_model):
                         print(f"Thinking model detected. Reserving {int(max_ai_tokens)} tokens for thinking + output.")
@@ -119,6 +122,7 @@ def main():
                     print(f"Invalid input for temperature. Error: {e}")
             
             #Saving settings
+            template_settings["total_tokens"] = total_tokens
             template_settings["max_tokens"] = max_tokens 
             template_settings["max_ai_tokens"] = max_ai_tokens
             template_settings["ai_model"] = ai_model 
@@ -135,6 +139,7 @@ def main():
     while True:
         try:
             current_settings = load(SETTINGS_FILE)
+            total_tokens = current_settings["total_tokens"]
             max_tokens = current_settings["max_tokens"]
             ai_model = current_settings["ai_model"]
             max_ai_tokens = current_settings["max_ai_tokens"]
@@ -159,17 +164,20 @@ def main():
                     if total_model_tokens <= 0:
                         print("Max tokens must be a positive integer.")
                         continue
+                    new_settings["total_tokens"] = total_model_tokens
                     current_model = new_settings["ai_model"]
-                    max_ai_tokens = calculate_ai_tokens(current_model, total_model_tokens)
-                    new_settings["max_ai_tokens"] = max_ai_tokens
                     overhead = (
                     return_tokens(current_settings["system_query"]) +
                     return_tokens(current_settings["user_query"])
                     )
+                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
+                    new_settings["max_ai_tokens"] = max_ai_tokens
                     max_tokens = total_model_tokens - max_ai_tokens - overhead
                     new_settings["max_tokens"] = max_tokens
                     if is_thinking_model(current_model):
                         print(f"Thinking model. Reserved {int(max_ai_tokens)} tokens for thinking + output.")
+                        if total_model_tokens < 12000:
+                            print("Note: For larger chunks and better performance, consider 12000+ total tokens.")
                     else:
                         print(f"Non-thinking model. Reserved {int(max_ai_tokens)} tokens for output.")
                 except Exception as e:
@@ -181,9 +189,9 @@ def main():
                     continue
                 new_settings["ai_model"] = ai_model
                 # Recalculate max_ai_tokens for new model type
-                old_total = new_settings["max_tokens"] + new_settings["max_ai_tokens"] + return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
-                new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model, old_total)
+                old_total = new_settings["total_tokens"]
                 overhead = return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
+                new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model, old_total)
                 new_settings["max_tokens"] = old_total - new_settings["max_ai_tokens"] - overhead
                 if is_thinking_model(ai_model):
                     print(f"Thinking model. Reserved {int(new_settings['max_ai_tokens'])} tokens for thinking + output.")
@@ -319,3 +327,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    input("Press enter to exit...")

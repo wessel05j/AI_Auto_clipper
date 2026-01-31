@@ -10,7 +10,8 @@ def ollama_chat(
     temperature: float = 0.7,
     think: str = "low",
     stream: bool = False,
-    max_tokens: int = 500,
+    max_output_tokens: int = 500,
+    max_tokens: int = 4096,
     url: str = "http://localhost:11434",
 ) -> str:
     '''Send a chat prompt to an Ollama model using the official /api/chat contract.
@@ -21,7 +22,7 @@ def ollama_chat(
         temperature (float): Sampling temperature for response generation.
         think (str): Level of "thinking" or deliberation by the model ("low", "medium", "high").
         stream (bool): Whether to stream the response or get it all at once.
-        max_tokens (int): Maximum number of tokens to generate in the response.
+        max_output_tokens (int): Maximum number of tokens to generate in the response.
         url (str): Base URL of the Ollama server.
     Returns:
         str: The model's response to the prompt.
@@ -40,7 +41,8 @@ def ollama_chat(
         # Ollama accepts model tuning values inside the options object.
         "options": {
             "temperature": temperature,
-            "num_predict": max_tokens,
+            "num_predict": max_output_tokens,
+            "num_ctx": max_tokens,
             # Some models (e.g., Deepseek R1 style) honor a `think` option.
             "think": think,
         },

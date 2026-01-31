@@ -1,8 +1,9 @@
 from programs.core_functionality.ollama_chat import ollama_chat
 import json
 import logging
+from programs.components.return_tokens import return_tokens
 
-def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_text, system_message, temperature, max_tokens, url):
+def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_text, system_message, temperature, max_output_tokens, max_tokens, url):
     '''Runs through a chunk of transcribed text and uses Ollama to find relevant clips.'''
     if len(chunked_transcribed_text) == 1:
         system_message = system_message
@@ -15,12 +16,15 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
             - ALWAYS end clips at clear sentence boundaries with proper punctuation (. ! ?) followed by a pause.
             - If context appears incomplete, end conservatively at the last confirmed complete sentence.'''
 
+    prompt = f"Transcript JSON: {transcribed_text}\nUser query: {user_query}"
+    
     response = ollama_chat(
         model=model,
-        prompt=f"Transcript JSON: {transcribed_text}\nUser query: {user_query}",
+        prompt=prompt,
         system_message=system_message,
         temperature=temperature,
         stream=False,
+        max_output_tokens=max_output_tokens,
         max_tokens=max_tokens,
         url=url,
     )
