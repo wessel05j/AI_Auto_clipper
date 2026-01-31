@@ -1,150 +1,156 @@
-# AI Auto Clipper
+# 🎬 AI Auto Clipper
 
-Automated pipeline that
-1. discovers local or YouTube videos,
-2. transcribes them with Whisper,
-3. chunks long transcripts using token estimation,
-4. sends each chunk to a local LLM via Ollama to find interesting segments based on a user query,
-5. merges nearby timestamps, and
-6. exports the matching clips as individual MP4 files.
+**Like OpusClip, but free!** 🚀 An automatic AI-powered video clip extractor that discovers videos, transcribes them with Whisper, uses local LLMs via Ollama to find interesting segments based on your query, and exports matching clips as MP4 files. No code editing needed – just run and configure interactively!
 
-The whole thing is started from `main.py` and configured interactively – you do **not** have to edit code to use it.
-
----
-
-## Features
-- Interactive setup wizard that stores settings in `system/settings.json`.
-- Batch video discovery from an input folder you choose.
-- Optional YouTube download step (via `yt_dlp`) into the input folder.
-- Fast transcription via Whisper local models (e.g. `tiny`, `base`, `small`, etc.).
-- Token-aware transcript chunking using tiktoken estimation and your model's max tokens.
-- LLM-guided semantic span extraction via **Ollama** (local runtime, default at `http://localhost:11434`).
-- Tolerance-based segment merging to avoid fragmented clips.
-- Automatic clip rendering to your output folder using MoviePy.
+## ✨ How It Works
+1. 🔍 Discover videos from local folders or download from YouTube
+2. 🎙️ Transcribe with Whisper (local, fast, private)
+3. ✂️ Chunk transcripts smartly using token estimation
+4. 🤖 Send chunks to your local LLM (Ollama) to find relevant segments
+5. 🔗 Merge nearby clips to avoid fragmentation
+6. 🎞️ Render and export clips using MoviePy
 
 ---
 
-## Project Layout
+## 📥 Installation & Setup
+
+### Windows 🪟
+1. **Install Python 3.10–3.11**: Download from [python.org](https://www.python.org/downloads/)
+2. **Install FFmpeg**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
+3. **Install Ollama**: Get it from [ollama.com](https://ollama.com/download) and pull a model: `ollama pull llama3.2`
+4. **Clone/Download this repo**
+
+### macOS 🍎 / Linux 🐧
+1. **Install Python 3.10–3.11**: Use Homebrew (`brew install python`) or your package manager
+2. **Install FFmpeg**: `brew install ffmpeg` (macOS) or `sudo apt install ffmpeg` (Ubuntu)
+3. **Install Ollama**: Follow [ollama.com](https://ollama.com/download) and run `ollama pull llama3.2`
+4. **Clone/Download this repo**
+
+### Python Packages 📦
+Install via `pip install -r requirements.txt`:
+- `openai-whisper` – Local Whisper transcription
+- `ollama` – Ollama client for local LLMs
+- `moviepy==1.0.3` – Video editing (pinned for compatibility)
+- `yt_dlp` – YouTube downloading
+- `torch` – PyTorch (CUDA-enabled if available)
+- `requests` – HTTP handling
+- `tiktoken` – Token counting
+- `tqdm` – Progress bars
+- `numpy<2` – Numerical ops (pinned)
+
+---
+
+## 🚀 How to Use
+
+### First Time Setup
+1. Run `python settings.py` (or `settings.bat` on Windows)
+2. Follow the interactive wizard:
+   - Choose your Ollama model (e.g., `llama3.2`)
+   - Pick Whisper model (`tiny` for speed, `large` for accuracy)
+   - Enter your clip query (e.g., "Find funny moments")
+   - Set max tokens, merge distance, etc.
+3. Settings save to `system/settings.json`
+
+### Running the Clipper
+- Run `python main.py` (or `main.bat`)
+- It processes videos in `input/`, outputs clips to `output/`
+- Check `system/log.txt` for logs and progress (good for troubleshooting)
+
+### Adjusting Settings for Better Results 🎛️
+Run `python settings.py` anytime to tweak:
+- **AI Model**: Use train-of-thought models for better detection (gpt-oss:20b)
+- **Whisper Model**: `tiny/base` for speed, `medium/large` for accuracy
+- **Max Tokens**: Higher = longer chunks processed at once (better context)
+- **Merge Distance**: Seconds to merge nearby clips (e.g., 30+ for longer clips)
+- **AI Loops**: How many times to re-scan chunks (1-3 recommended)
+- **Temperature**: 0.1-0.9 for creativity vs. precision
+- **Channels/Hours Limit**: For YouTube monitoring
+
+---
+
+## 📺 YouTube Downloads & Cookies 🍪
+
+To download unlimited YouTube videos without restrictions:
+
+1. **Install browser extension**: Get "Get cookies.txt" for [Chrome](https://chrome.google.com/webstore/detail/get-cookiestxt/bgaddhkoddajcdgocldbbfleckgcbcid) or [Firefox](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/)
+2. **Log into YouTube** in your browser
+3. **Export cookies**: Click the extension icon, save as `cookies.txt` in the project root
+4. **The downloader auto-uses it** – no extra config needed!
+
+If downloads fail, ensure cookies are fresh and from the same browser.
+
+---
+
+## ⚡ Running with CUDA (GPU Acceleration)
+
+For blazing-fast transcription on NVIDIA GPUs:
+
+### Check CUDA Support
+After installing deps: `python -c "import torch; print(torch.cuda.is_available())"`
+- `True` = GPU mode active! 🚀
+- `False` = CPU mode (still works, just slower)
+
+### Manual CUDA Setup
+If not detected:
+1. **Install CUDA Toolkit 11.8**: From [NVIDIA](https://developer.nvidia.com/cuda-11-8-0-download-archive)
+2. **Update NVIDIA drivers**: [Download](https://www.nvidia.com/Download/index.aspx)
+3. **Reinstall PyTorch**: 
+   ```bash
+   pip uninstall torch -y
+   pip install torch==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+   ```
+4. **Restart & verify**
+
+**Note**: Whisper needs 2-8GB VRAM depending on model size. CPU fallback works but is 5-10x slower.
+
+---
+
+## 🗂️ Project Layout
 ```
 AI_Auto_clipper/
-├── main.py                     # Orchestrates setup + full pipeline
-├── settings.py                 # Interactive settings menu
+├── main.py                     # Main orchestrator
+├── settings.py                 # Interactive config wizard
 ├── programs/
-│   ├── components/
-│   │   ├── file_exists.py      # Tiny helper to check JSON/clip files
-│   │   ├── interact_w_json.py  # Read/write JSON helper
-│   │   ├── load.py             # JSON load wrapper
-│   │   ├── return_tokens.py    # Token estimation using tiktoken
-│   │   ├── scan_videos.py      # Collects video file paths from input folder
-│   │   └── write.py            # JSON write wrapper
-│   └── core_functionality/
-│       ├── yt_downloader.py    # Downloads YouTube videos to input folder
-│       ├── transcribing.py     # Whisper transcription + basic segment merging
-│       ├── chunking.py         # Splits transcript into token-sized chunks
-│       ├── ollama_scanning.py  # LLM call to extract relevant [start, end] spans
-│       ├── merge_segments.py   # Merges close timestamp segments
-│       ├── extract_clip.py     # Cuts clips using MoviePy
-│       ├── ollama_on.py        # Starts Ollama server
-│       ├── ollama_off.py       # Stops Ollama server
-│       ├── ollama_chat.py      # Chat with Ollama
-│       └── ollama_scanning.py  # Scanning with Ollama
-├── system/                     # Settings + temporary JSON artifacts (settings.json, transcribing.json, AI.json, clips.json)
-├── input/                      # Input videos
+│   ├── components/             # Helpers (JSON, tokens, file ops)
+│   └── core_functionality/     # Core modules (transcribe, scan, extract)
+├── system/                     # Configs & logs (settings.json, log.txt)
+├── input/                      # Your video files
 ├── output/                     # Generated clips
-└── temp/                       # Temp files
+└── temp/                       # Temporary processing files
 ```
 
 ---
 
-## Requirements
+## 🔧 System Usage & Logging 📝
 
-### System Dependencies
-- **FFmpeg** must be installed and available on `PATH` (required by MoviePy for video processing).
-  - Download from https://ffmpeg.org/download.html
-  - Add to PATH.
-- **Ollama** for local LLMs: https://ollama.com/download
-  - Install and pull a model, e.g. `ollama pull llama3.2`
-
-### Python
-- Python 3.10–3.11 recommended.
-
-### Python Packages
-Install with `pip install -r requirements.txt`:
-- `openai-whisper` – Whisper transcription.
-- `ollama` – Ollama client.
-- `moviepy==1.0.3` – Video clipping (pinned due to compatibility issues with newer versions).
-- `yt_dlp` – YouTube downloading.
-- `torch` – PyTorch (automatically installs CUDA version if CUDA is available).
-- `requests` – HTTP requests.
-- `tiktoken` – Token estimation.
-- `tqdm` – Progress bars.
-- `numpy<2` – NumPy (pinned for compatibility).
+- **Logging**: All activity logged to `system/log.txt` – check for errors or progress
+- **Status Files**: `system/status.json` tracks current processing state
+- **Temp Files**: Safe to delete `temp/` after runs, but keep for reruns
+- **Rerun Option**: In settings, enable "Rerun Temp Files" to skip re-transcription
 
 ---
 
-## CUDA Support
+## 🛠️ Troubleshooting
 
-PyTorch (required by Whisper) supports GPU acceleration via CUDA for faster transcription.
+- **No clips found?** Adjust your query or lower temperature
+- **Transcription slow?** Use smaller Whisper model or enable CUDA
+- **YouTube download fails?** Check cookies or try without them
+- **Ollama errors?** Ensure Ollama is running: `ollama serve`
+- **Memory issues?** Reduce max tokens or use CPU mode
+- **Video errors?** Ensure FFmpeg is installed and on PATH
 
-### Automatic Detection
-- The `requirements.txt` installs PyTorch with CUDA support if compatible drivers are detected.
-- If CUDA is not available on your system, it falls back to CPU-only PyTorch (slower but functional).
-- To check: After installation, run `python -c "import torch; print(torch.cuda.is_available())"`
-  - If `False`, you're using CPU mode.
-
-### Manual CUDA Installation
-If automatic detection fails or you installed CUDA after setting up the environment:
-1. Activate the virtual environment: `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Linux/Mac)
-2. Uninstall CPU PyTorch: `pip uninstall torch -y`
-3. Install CUDA PyTorch: `pip install torch==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118`
-4. Verify: `python -c "import torch; print(torch.cuda.is_available())"` should return `True`
-
-### Installing CUDA for GPU Acceleration
-If you have an NVIDIA GPU and want faster transcription:
-1. Check your GPU's CUDA compatibility: https://developer.nvidia.com/cuda-gpus
-2. Download and install CUDA Toolkit 11.8: https://developer.nvidia.com/cuda-11-8-0-download-archive
-3. Install NVIDIA drivers (if not already): https://www.nvidia.com/Download/index.aspx
-4. Restart your system.
-5. Reinstall dependencies: Delete the `venv` folder and run `main.bat` again.
-
-### Troubleshooting
-- If CUDA is not detected after installation, PyTorch falls back to CPU.
-- For Windows, ensure NVIDIA drivers are up to date.
-- Check GPU memory: Whisper models require 2-8GB VRAM depending on size.
-- CPU mode works but is 5-10x slower than GPU.
+For more help, check `system/log.txt` or open an issue.
 
 ---
 
-## Running the Program
+## 💡 Recommendations
 
-### Quick Start (Windows)
-1. Ensure Python 3.10–3.11 is installed.
-2. Install FFmpeg and Ollama as described in Requirements.
-3. Run `main.bat` – it will create a virtual environment, install dependencies, and start the application.
-
-### Manual Setup
-1. **Install Dependencies**
-   - Install FFmpeg and Ollama as above.
-   - Run `pip install -r requirements.txt`
-
-2. **First Run**
-   - Run `python settings.py`
-   - Follow interactive setup: choose model, query, etc.
-   - Settings saved to `system/settings.json`
-
-3. **Subsequent Runs**
-   - Run `python settings.py` to edit settings.
-   - Run `python main.py` to process videos.
-
-Output clips in `output/`.
+- **Models**: Start with `llama3.2` for AI, `base` for Whisper
+- **Hardware**: 8GB+ RAM, GPU recommended for speed
+- **Videos**: MP4 format preferred, <2GB for faster processing
+- **Queries**: Be specific (e.g., "funny cat videos" vs. "cats")
 
 ---
 
-## Tips
-- Use smaller Whisper models for speed.
-- Adjust merge distance for clip length.
-
----
-
-## License
+## 📄 License
 Apache License 2.0

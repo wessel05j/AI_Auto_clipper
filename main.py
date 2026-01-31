@@ -96,7 +96,7 @@ def init():
     global STATUS_FILE
     STATUS_FILE = os.path.join(SYSTEM_DIR, "status.json")
     
-    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_token, system_message, ai_loops, ollama_url, max_ai_tokens, temperature, rerun_temp_files, total_tokens
+    global settings, model, transcribing_model, user_query, youtube_list, merge_distance, max_chunking_tokens, system_message, ai_loops, ollama_url, max_ai_tokens, temperature, rerun_temp_files, total_tokens
     try:
         settings = load(SETTINGS_FILE)
     except FileNotFoundError:
@@ -109,7 +109,7 @@ def init():
     user_query = settings["user_query"]
     system_message = settings["system_query"]
     total_tokens = settings["total_tokens"]
-    max_token = settings["max_tokens"]
+    max_chunking_tokens = settings["max_chunking_tokens"]
     max_ai_tokens = settings["max_ai_tokens"]
     youtube_list = settings["youtube_list"]
     merge_distance = settings["merge_distance"]
@@ -251,7 +251,7 @@ def start() -> None:
         status["current_step"] = "Chunking"
         write(STATUS_FILE, status)
         try:
-            chunked_transcribed_text = chunking(transcribed_text, max_token)
+            chunked_transcribed_text = chunking(transcribed_text, max_chunking_tokens)
             logging.info(f"Chunks created: {len(chunked_transcribed_text)}") 
         except Exception as e:
             logging.error(f"Error during chunking for video {video}: {e}")

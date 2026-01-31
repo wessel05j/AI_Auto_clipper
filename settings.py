@@ -16,7 +16,7 @@ def main():
     SETTINGS_FILE = os.path.join(SYSTEM_DIR, "settings.json")
     settings_data_contract = {
             "total_tokens": 0,
-            "max_tokens": 0,
+            "max_chunking_tokens": 0,
             "max_ai_tokens": 0,
             "ai_model": "",
             "transcribing_model": "",
@@ -50,10 +50,10 @@ def main():
             # Non-thinking models only need ~300 for output
             return 300
 
-    def menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files):
+    def menu(total_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files):
         os.system('cls' if os.name == 'nt' else 'clear')
         print("<-----MENU----->")
-        print(f"<-----1. Max Tokens: {max_tokens} (rest for model(cannot be changed): {max_ai_tokens})")
+        print(f"<-----1. Max Tokens: {total_tokens} (rest for model(cannot be changed): {max_ai_tokens})")
         print(f"<-----2. AI Model: {ai_model}")
         print(f"<-----3. Transcribing Model: {transcribing_model}")
         print(f"<-----4. User Query: {user_query}")
@@ -84,8 +84,8 @@ def main():
             user_query = input("Please enter your query for the AI to choose clips (e.g., 'Find all clips where someone is talking about cats'): ")
             while user_query.strip() == "":
                 user_query = input("User query cannot be empty. Please enter your query: ")
-            max_tokens = 0
-            while max_tokens <= 0:
+            max_chunking_tokens = 0
+            while max_chunking_tokens <= 0:
                 try:
                     total_model_tokens = int(input("Please enter the maximum tokens your AI model can handle (total model limit): "))
                     while total_model_tokens <= 0:
@@ -93,7 +93,7 @@ def main():
                     total_tokens = total_model_tokens
                     overhead = return_tokens(template_settings["system_query"]) + return_tokens(user_query)
                     max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
-                    max_tokens = total_model_tokens - max_ai_tokens - overhead
+                    max_chunking_tokens = total_model_tokens - max_ai_tokens - overhead
                     if is_thinking_model(ai_model):
                         print(f"Thinking model detected. Reserving {int(max_ai_tokens)} tokens for thinking + output.")
                     else:
@@ -123,7 +123,7 @@ def main():
             
             #Saving settings
             template_settings["total_tokens"] = total_tokens
-            template_settings["max_tokens"] = max_tokens 
+            template_settings["max_chunking_tokens"] = max_chunking_tokens 
             template_settings["max_ai_tokens"] = max_ai_tokens
             template_settings["ai_model"] = ai_model 
             template_settings["transcribing_model"] = transcribing_model 
@@ -140,7 +140,7 @@ def main():
         try:
             current_settings = load(SETTINGS_FILE)
             total_tokens = current_settings["total_tokens"]
-            max_tokens = current_settings["max_tokens"]
+            max_chunking_tokens = current_settings["max_chunking_tokens"]
             ai_model = current_settings["ai_model"]
             max_ai_tokens = current_settings["max_ai_tokens"]
             transcribing_model = current_settings["transcribing_model"]
@@ -154,7 +154,7 @@ def main():
             channels = current_settings["channels"]
             channels_hours_limit = current_settings["channels_hours_limit"]
             rerun_temp_files = current_settings["rerun_temp_files"]
-            menu(max_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files)
+            menu(total_tokens, max_ai_tokens, ai_model, transcribing_model, user_query, system_query, youtube_list, merge_distance, ai_loops, ollama_url, temperature, channels, channels_hours_limit, rerun_temp_files)
             new_settings = load(SETTINGS_FILE)
 
             choice = input("Input: ").strip()
@@ -172,8 +172,8 @@ def main():
                     )
                     max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
                     new_settings["max_ai_tokens"] = max_ai_tokens
-                    max_tokens = total_model_tokens - max_ai_tokens - overhead
-                    new_settings["max_tokens"] = max_tokens
+                    max_chunking_tokens = total_model_tokens - max_ai_tokens - overhead
+                    new_settings["max_chunking_tokens"] = max_chunking_tokens
                     if is_thinking_model(current_model):
                         print(f"Thinking model. Reserved {int(max_ai_tokens)} tokens for thinking + output.")
                         if total_model_tokens < 12000:
@@ -192,7 +192,7 @@ def main():
                 old_total = new_settings["total_tokens"]
                 overhead = return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
                 new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model, old_total)
-                new_settings["max_tokens"] = old_total - new_settings["max_ai_tokens"] - overhead
+                new_settings["max_chunking_tokens"] = old_total - new_settings["max_ai_tokens"] - overhead
                 if is_thinking_model(ai_model):
                     print(f"Thinking model. Reserved {int(new_settings['max_ai_tokens'])} tokens for thinking + output.")
                 else:
