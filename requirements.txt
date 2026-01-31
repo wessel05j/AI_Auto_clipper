@@ -1,5 +1,8 @@
 openai-whisper
-ollama
 moviepy==1.0.3
 yt_dlp
-torch 
+requests
+tiktoken
+ollama
+tqdm
+numpy<2

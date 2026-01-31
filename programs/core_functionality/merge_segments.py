@@ -24,12 +24,11 @@ def merge_segments(segment_list, tolerance):
         start = all_blocks[i][0]
         end = all_blocks[i][1]
         score = all_blocks[i][2]
-        last_start = merged_pile[-1][0]
         last_end = merged_pile[-1][1]
         last_score = merged_pile[-1][2]
 
-        # If blocks are close, hug them together
-        if abs(last_end - start) <= tolerance:
+        # Merge if overlapping or within tolerance gap
+        if start <= last_end + tolerance:
             merged_pile[-1][1] = max(last_end, end)
             merged_pile[-1][2] = max(last_score, score)  # Keep highest score
         else:

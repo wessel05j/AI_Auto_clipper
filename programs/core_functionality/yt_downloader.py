@@ -10,13 +10,15 @@ def yt_downloader(url: str, output: str):
         "outtmpl": f"{output}/%(title).200B.%(ext)s",
         "quiet": False,
         "noprogress": False,
+        "socket_timeout": 60,
+        "retries": 10,
+        "fragment_retries": 10,
+        "retry_sleep": 5,
+        "retry_sleep_functions": {
+            'http': lambda n: min(2 ** n, 300),
+            'fragment': lambda n: min(2 ** n, 300),
+        },
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        print(f"\nDownloading: {url}")
-        try:
-            ydl.download([url])
-            return True
-        except yt_dlp.utils.DownloadError as e:
-            print(f"Download failed for {url}: {e}")
-            return False
+        ydl.download([url])
