@@ -21,7 +21,7 @@ def main():
             "ai_model": "",
             "transcribing_model": "",
             "user_query": "",
-            "system_query": "You are a JSON clip extractor. You receive a transcript and a user query. You output ONLY a JSON array of clips. Use minimal internal reasoning. Nothing else. No words. No explanation.\n\nYOUR ONLY JOB:\n1. Read the user query to understand what clips to find\n2. Find matching sections in the transcript\n3. Output: [[start, end, score], [start, end, score], ...]\n\nFORMAT RULES:\n- start = number (seconds when clip begins)\n- end = number (seconds when clip ends)\n- score = number 1-10 (how well it matches the user query)\n- All clips go in ONE array\n- Return [] if nothing matches\n\nSTRICT RULES:\n- NEVER write words like 'Here are the clips'\n- NEVER use ``` markdown\n- NEVER put text in the score position (only numbers)\n- ALWAYS start your response with [ and end with ]\n- LONGER clips are better when content is continuous\n\nYou will now receive a transcript and user query. Respond with ONLY the JSON array.",
+            "system_query": "You are an expert transcript clip selector for the users request.\nInput:\n- JSON transcript: [[start, end, \"text\"], ...] with start/end in seconds.\n\nOUTPUT ONLY (STRICT):\n- ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]\n- The third element is how well the clip matches the user query (1-10, 1=good, 5=very good and 10=excellent).\n- No explanations, no extra keys, no comments.\n\nRules:\n- Keep full timestamp precision; do not round.\n- Each clip must be a complete thought: clear beginning, middle, and end.\n- Prefer natural pauses and paragraph boundaries for cut points.\n- Prefer context-rich clips that clearly match the user query.\n- If no segments match the query, return an empty list: [].\n",
             "youtube_list": [],
             "merge_distance": 0,
             "ai_loops": 0,
@@ -45,7 +45,7 @@ def main():
     def calculate_ai_tokens(model_name):
         """Calculate max_ai_tokens based on model type"""
         if is_thinking_model(model_name):
-            return 500
+            return 1000
         else:
             # Non-thinking models only need ~300 for output
             return 300
