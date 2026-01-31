@@ -23,7 +23,6 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
         prompt=prompt,
         system_message=system_message,
         temperature=temperature,
-        stream=False,
         max_output_tokens=max_output_tokens,
         max_tokens=max_tokens,
         url=url,

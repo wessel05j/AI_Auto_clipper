@@ -38,13 +38,13 @@ def ollama_chat(
         "model": model,
         "messages": [],
         "stream": stream,
+        "think": think,
         # Ollama accepts model tuning values inside the options object.
         "options": {
             "temperature": temperature,
             "num_predict": max_output_tokens,
             "num_ctx": max_tokens,
             # Some models (e.g., Deepseek R1 style) honor a `think` option.
-            "think": think,
         },
     }
 

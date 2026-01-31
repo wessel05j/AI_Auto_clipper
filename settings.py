@@ -45,7 +45,7 @@ def main():
     def calculate_ai_tokens(model_name, max_total_tokens):
         """Calculate max_ai_tokens based on model type"""
         if is_thinking_model(model_name):
-            return max_total_tokens*0.6
+            return max_total_tokens*0.25  # Reserve 25% for thinking + output   
         else:
             # Non-thinking models only need ~300 for output
             return 300
