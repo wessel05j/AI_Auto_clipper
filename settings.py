@@ -42,10 +42,10 @@ def main():
         model_lower = model_name.lower()
         return any(tm in model_lower for tm in thinking_models)
     
-    def calculate_ai_tokens(model_name, max_total_tokens):
+    def calculate_ai_tokens(model_name):
         """Calculate max_ai_tokens based on model type"""
         if is_thinking_model(model_name):
-            return max_total_tokens*0.25  # Reserve 25% for thinking + output   
+            return 500
         else:
             # Non-thinking models only need ~300 for output
             return 300
@@ -92,7 +92,7 @@ def main():
                         total_model_tokens = int(input("Max tokens must be a positive integer. Please enter again: "))
                     total_tokens = total_model_tokens
                     overhead = return_tokens(template_settings["system_query"]) + return_tokens(user_query)
-                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
+                    max_ai_tokens = calculate_ai_tokens(ai_model)
                     max_chunking_tokens = total_model_tokens - max_ai_tokens - overhead
                     if is_thinking_model(ai_model):
                         print(f"Thinking model detected. Reserving {int(max_ai_tokens)} tokens for thinking + output.")
@@ -170,7 +170,7 @@ def main():
                     return_tokens(current_settings["system_query"]) +
                     return_tokens(current_settings["user_query"])
                     )
-                    max_ai_tokens = calculate_ai_tokens(ai_model, total_model_tokens)
+                    max_ai_tokens = calculate_ai_tokens(ai_model)
                     new_settings["max_ai_tokens"] = max_ai_tokens
                     max_chunking_tokens = total_model_tokens - max_ai_tokens - overhead
                     new_settings["max_chunking_tokens"] = max_chunking_tokens
@@ -191,7 +191,7 @@ def main():
                 # Recalculate max_ai_tokens for new model type
                 old_total = new_settings["total_tokens"]
                 overhead = return_tokens(current_settings["system_query"]) + return_tokens(current_settings["user_query"])
-                new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model, old_total)
+                new_settings["max_ai_tokens"] = calculate_ai_tokens(ai_model)
                 new_settings["max_chunking_tokens"] = old_total - new_settings["max_ai_tokens"] - overhead
                 if is_thinking_model(ai_model):
                     print(f"Thinking model. Reserved {int(new_settings['max_ai_tokens'])} tokens for thinking + output.")

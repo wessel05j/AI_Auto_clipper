@@ -30,6 +30,8 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
 
     responsed = response.strip()
     
+
+
     # Strip thinking model output
     if "</think>" in responsed:
         responsed = responsed.split("</think>")[-1].strip()
@@ -39,8 +41,8 @@ def ollama_scanning(transcribed_text, user_query, model, chunked_transcribed_tex
         logging.debug(f"Parsed AI output: {parsed_output}")
         return parsed_output
     except json.JSONDecodeError as e:
-        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed}")
+        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed[:200]}")
         return []
     except json.JSONDecodeError as e:
-        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed}")
+        logging.warning(f"Failed to parse AI response: {e}. Response was: {responsed[:200]}")
         return []

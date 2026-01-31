@@ -2,6 +2,7 @@ from typing import Optional
 import json
 import requests
 import logging
+from programs.components.return_tokens import return_tokens
 
 def ollama_chat(
     model: str,
@@ -74,6 +75,20 @@ def ollama_chat(
     
     # Log the full response for debugging
     logging.debug(f"Ollama raw response: {json.dumps(body)}")
+    # Extract all body info to calculate tokens used, handle missing fields gracefully
+    total = ""
+    total += str(body.get("model", "")) + str(body.get("created_at", ""))
+    messages = body.get("message", {})
+    total += str(messages.get("role", "")) + str(messages.get("content", "")) + str(messages.get("thinking", ""))
+    total += str(body.get("done", ""))
+    total += str(body.get("done_reason", body.get("done_Reason", "")))
+    total += str(body.get("total_duration", ""))
+    total += str(body.get("load_duration", ""))
+    total += str(body.get("prompt_eval_count", ""))
+    total += str(body.get("prompt_eval_duration", ""))
+    total += str(body.get("eval_count", ""))
+    total += str(body.get("eval_duration", ""))
+    logging.debug(f"Ollama used total tokens: {return_tokens(total)}")
     
     # Extract content - handle both chat and completion formats
     content = ""
