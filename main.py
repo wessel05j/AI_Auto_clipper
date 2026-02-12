@@ -157,10 +157,10 @@ def start() -> None:
             temperature=1.0,
             think="low",
             stream=False,
-            max_tokens=50,
+            max_output_tokens=50,
+            max_tokens=512,
             url=ollama_url,
         )
-        logging.info(f"Ollama response: {response}")
         logging.info("Ollama communication successful.")
         time.sleep(3)
         cls()
@@ -175,11 +175,18 @@ def start() -> None:
     while len(youtube_list) > 0:
         for link in list(youtube_list):
             try:
-                yt_downloader(link, INPUT_DIR)
-                youtube_list.remove(link)
-                settings = load(SETTINGS_FILE)
-                settings["youtube_list"] = youtube_list
-                write(SETTINGS_FILE, settings)
+                downloaded_path = yt_downloader(link, INPUT_DIR)
+                if downloaded_path:
+                    youtube_list.remove(link)
+                    settings = load(SETTINGS_FILE)
+                    settings["youtube_list"] = youtube_list
+                    write(SETTINGS_FILE, settings)
+                else:
+                    logging.warning(f"Skipping {link}: download failed or file too small.")
+                    youtube_list.remove(link)  # Remove even if skipped, to avoid infinite loop
+                    settings = load(SETTINGS_FILE)
+                    settings["youtube_list"] = youtube_list
+                    write(SETTINGS_FILE, settings)
             except Exception as e:
                 logging.error(f"Error downloading {link}: {e}. Continuing to next video.")
                 continue

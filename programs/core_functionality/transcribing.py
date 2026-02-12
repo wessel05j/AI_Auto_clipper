@@ -1,8 +1,13 @@
 def transcribe_video(folder, model, min_pause=3.0):
     import re
+    import logging
 
-    # Use provided model
-    result = model.transcribe(folder, verbose=False)
+    try:
+        # Use provided model
+        result = model.transcribe(folder, verbose=False)
+    except Exception as e:
+        logging.error(f"Failed to load audio: {e}")
+        raise
 
     # Regex for strong sentence ending (includes quotes and spaces)
     strong_end = re.compile(r"[\.!\?]+(?:\"|'|\s|$)")

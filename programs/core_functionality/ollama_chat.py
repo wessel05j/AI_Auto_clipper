@@ -72,14 +72,25 @@ def ollama_chat(
         return "".join(chunks)
 
     body = response.json()
-    
-    # Log the full response for debugging
-    logging.debug(f"Ollama raw response: {json.dumps(body)}")
+
+    # Keep debug logs useful without flooding log files with massive thinking traces.
+    safe_body = dict(body)
+    message = safe_body.get("message")
+    if isinstance(message, dict):
+        message = dict(message)
+        content = str(message.get("content", ""))
+        thinking = str(message.get("thinking", ""))
+        if len(content) > 600:
+            message["content"] = content[:600] + "...<truncated>"
+        if thinking:
+            message["thinking"] = f"<omitted:{len(thinking)} chars>"
+        safe_body["message"] = message
+    logging.debug(f"Ollama raw response: {json.dumps(safe_body)}")
     # Extract all body info to calculate tokens used, handle missing fields gracefully
     total = ""
     total += str(body.get("model", "")) + str(body.get("created_at", ""))
     messages = body.get("message", {})
-    total += str(messages.get("role", "")) + str(messages.get("content", "")) + str(messages.get("thinking", ""))
+    total += str(messages.get("role", "")) + str(messages.get("content", ""))
     total += str(body.get("done", ""))
     total += str(body.get("done_reason", body.get("done_Reason", "")))
     total += str(body.get("total_duration", ""))
