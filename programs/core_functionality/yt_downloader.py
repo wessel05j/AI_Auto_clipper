@@ -1,24 +1,21 @@
-def yt_downloader(url: str, output: str):
-    import yt_dlp
-    import os
+import os
+from typing import Optional
 
+from programs.core_functionality.yt_service import YTService
+
+
+_YOUTUBE_CLIENT: Optional[YTService] = None
+
+
+def _youtube_client() -> YTService:
+    global _YOUTUBE_CLIENT
+    if _YOUTUBE_CLIENT is None:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        _YOUTUBE_CLIENT = YTService(base_dir=base_dir)
+    return _YOUTUBE_CLIENT
+
+
+def yt_downloader(url: str, output: str) -> Optional[str]:
     os.makedirs(output, exist_ok=True)
-
-    ydl_opts = {
-        "format": "bv*+ba/b",
-        "merge_output_format": "mp4",
-        "outtmpl": f"{output}/%(title).200B.%(ext)s",
-        "quiet": False,
-        "noprogress": False,
-        "socket_timeout": 60,
-        "retries": 10,
-        "fragment_retries": 10,
-        "retry_sleep": 5,
-        "retry_sleep_functions": {
-            'http': lambda n: min(2 ** n, 300),
-            'fragment': lambda n: min(2 ** n, 300),
-        },
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    downloaded = _youtube_client().download_video(url=url, output_dir=output)
+    return downloaded

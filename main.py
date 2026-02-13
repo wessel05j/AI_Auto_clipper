@@ -1,6 +1,6 @@
 import os
-import time
 import logging
+import requests
 from tqdm import tqdm
 # Core files
 from programs.core_functionality.yt_downloader import yt_downloader
@@ -10,7 +10,6 @@ from programs.core_functionality.merge_segments import merge_segments
 from programs.core_functionality.extract_clip import extract_clip
 from programs.core_functionality.ollama_on import ollama_on
 from programs.core_functionality.ollama_off import ollama_off
-from programs.core_functionality.ollama_chat import ollama_chat
 from programs.core_functionality.ollama_scanning import ollama_scanning
 
 # Components
@@ -21,6 +20,22 @@ from programs.components.scan_videos import scan_videos
 
 def cls():
     os.system('cls' if os.name == 'nt' else 'clear')
+
+
+CLIP_PROGRESS_INTERVAL = 5
+
+
+def ollama_health_check(url: str, timeout: float = 5.0) -> bool:
+    base_url = url.rstrip("/")
+    endpoints = (f"{base_url}/api/version", f"{base_url}/api/tags")
+    for endpoint in endpoints:
+        try:
+            response = requests.get(endpoint, timeout=timeout)
+        except requests.RequestException:
+            continue
+        if response.ok:
+            return True
+    return False
 
 def init():
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -90,6 +105,8 @@ def init():
     AI_FILE = os.path.join(SYSTEM_DIR, "AI.json")
     global CLIPS_FILE
     CLIPS_FILE = os.path.join(SYSTEM_DIR, "clips.json")
+    global CLIP_PROGRESS_FILE
+    CLIP_PROGRESS_FILE = os.path.join(SYSTEM_DIR, "clip_progress.json")
     global CURRENT_VIDEO_FILE
     CURRENT_VIDEO_FILE = os.path.join(SYSTEM_DIR, "current_video.txt")
     
@@ -130,6 +147,8 @@ def init():
                 os.remove(AI_FILE)
             if os.path.exists(CLIPS_FILE):
                 os.remove(CLIPS_FILE)
+            if os.path.exists(CLIP_PROGRESS_FILE):
+                os.remove(CLIP_PROGRESS_FILE)
             if os.path.exists(CURRENT_VIDEO_FILE):
                 os.remove(CURRENT_VIDEO_FILE)  
 
@@ -149,20 +168,10 @@ def start() -> None:
         model_whisper = whisper.load_model(transcribing_model, device=device)
         logging.info("Turning ollama on...")
         ollama_on(ollama_url)
-        logging.info("Testing ollama connection...")
-        response = ollama_chat(
-            model=model,
-            prompt="This is just a connectivity test.",
-            system_message="Answer briefly with 'Ollama is connected.'",
-            temperature=1.0,
-            think="low",
-            stream=False,
-            max_tokens=50,
-            url=ollama_url,
-        )
-        logging.info(f"Ollama response: {response}")
-        logging.info("Ollama communication successful.")
-        time.sleep(3)
+        logging.info("Running ollama health check...")
+        if not ollama_health_check(ollama_url):
+            raise RuntimeError("Ollama health check failed")
+        logging.info("Ollama is healthy.")
         cls()
     except Exception as e:
         logging.error(f"Error during booting procedure: {e}")
@@ -175,11 +184,18 @@ def start() -> None:
     while len(youtube_list) > 0:
         for link in list(youtube_list):
             try:
-                yt_downloader(link, INPUT_DIR)
-                youtube_list.remove(link)
-                settings = load(SETTINGS_FILE)
-                settings["youtube_list"] = youtube_list
-                write(SETTINGS_FILE, settings)
+                downloaded_path = yt_downloader(link, INPUT_DIR)
+                if downloaded_path:
+                    youtube_list.remove(link)
+                    settings = load(SETTINGS_FILE)
+                    settings["youtube_list"] = youtube_list
+                    write(SETTINGS_FILE, settings)
+                else:
+                    logging.warning(f"Skipping {link}: download failed or file too small.")
+                    youtube_list.remove(link)  # Remove even if skipped, to avoid infinite loop
+                    settings = load(SETTINGS_FILE)
+                    settings["youtube_list"] = youtube_list
+                    write(SETTINGS_FILE, settings)
             except Exception as e:
                 logging.error(f"Error downloading {link}: {e}. Continuing to next video.")
                 continue
@@ -208,7 +224,7 @@ def start() -> None:
         if saved_video and saved_video != video:
             # Temp files are from a different video - must clean
             logging.info(f"Cleaning stale temp files from previous video: {os.path.basename(saved_video)}")
-            for temp_file in [TRANSCRIBING_FILE, AI_FILE, CLIPS_FILE, CURRENT_VIDEO_FILE]:
+            for temp_file in [TRANSCRIBING_FILE, AI_FILE, CLIPS_FILE, CLIP_PROGRESS_FILE, CURRENT_VIDEO_FILE]:
                 if os.path.exists(temp_file):
                     try:
                         os.remove(temp_file)
@@ -330,13 +346,42 @@ def start() -> None:
         write(STATUS_FILE, status)
         try:
             if file_exists(CLIPS_FILE):
-                list_of_clips = load(CLIPS_FILE)
+                all_clips = load(CLIPS_FILE)
+            else:
+                all_clips = list_of_clips
+                write(CLIPS_FILE, all_clips)
 
-            logging.info(f"Clips to extract: {len(list_of_clips)}")
-            for clip in list(list_of_clips):
-                extract_clip(clip, video, OUTPUT_DIR, len(list_of_clips), clip[2])
-                list_of_clips.remove(clip)
-                write(CLIPS_FILE, list_of_clips)
+            resume_index = 0
+            if file_exists(CLIP_PROGRESS_FILE):
+                progress_payload = load(CLIP_PROGRESS_FILE)
+                if isinstance(progress_payload, dict):
+                    resume_index = int(progress_payload.get("next_index", 0))
+                elif isinstance(progress_payload, int):
+                    resume_index = progress_payload
+                resume_index = max(0, min(resume_index, len(all_clips)))
+                if resume_index > 0:
+                    logging.info(f"Resuming clip extraction from clip {resume_index + 1}")
+
+            logging.info(f"Clips to extract: {len(all_clips)}")
+            from moviepy.editor import VideoFileClip
+            with VideoFileClip(video) as main_video:
+                for clip_index in range(resume_index, len(all_clips)):
+                    clip = all_clips[clip_index]
+                    rating = clip[2] if len(clip) > 2 else 0
+                    extract_clip(
+                        clip,
+                        video,
+                        OUTPUT_DIR,
+                        clip_index + 1,
+                        rating,
+                        main_video=main_video,
+                    )
+                    checkpoint_due = (
+                        ((clip_index + 1) % CLIP_PROGRESS_INTERVAL == 0)
+                        or (clip_index == len(all_clips) - 1)
+                    )
+                    if checkpoint_due:
+                        write(CLIP_PROGRESS_FILE, {"next_index": clip_index + 1})
             logging.info("Clip extraction complete")
         except Exception as e:
             logging.error(f"Error during video clipping for video {video}: {e}")
@@ -356,6 +401,8 @@ def start() -> None:
                 os.remove(TRANSCRIBING_FILE)
             if os.path.exists(CLIPS_FILE):
                 os.remove(CLIPS_FILE)
+            if os.path.exists(CLIP_PROGRESS_FILE):
+                os.remove(CLIP_PROGRESS_FILE)
             if os.path.exists(CURRENT_VIDEO_FILE):
                 os.remove(CURRENT_VIDEO_FILE)
             if os.path.exists(video):

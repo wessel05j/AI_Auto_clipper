@@ -8,18 +8,25 @@ def sanitize_filename(filename: str) -> str:
 
 
 
-def extract_clip(clip: list, video: str, output: str, id: int, rating: float) -> None:
+def extract_clip(
+    clip: list,
+    video: str,
+    output: str,
+    id: int,
+    rating: float,
+    main_video=None,
+) -> None:
     from moviepy.editor import VideoFileClip
     import os
 
-    start_time, end_time = clip[0], clip[1]
-    
-    with VideoFileClip(video) as main_video:
+    def _write_clip(video_handle):
+        start_time, end_time = clip[0], clip[1]
+
         # Clamp end_time to stay within video duration (10ms buffer to avoid edge issues)
-        video_duration = main_video.duration
+        video_duration = video_handle.duration
         clip_end = min(end_time, video_duration)
-        
-        subclip = main_video.subclip(start_time, clip_end)
+
+        subclip = video_handle.subclip(start_time, clip_end)
 
         video_basename = os.path.splitext(os.path.basename(video))[0]
         video_sanitized = sanitize_filename(video_basename)
@@ -35,7 +42,7 @@ def extract_clip(clip: list, video: str, output: str, id: int, rating: float) ->
             )
         except Exception as e:
             clip_end = min(end_time + 0.1, video_duration - 0.1)  # Further reduce by 100ms and add buffer
-            subclip = main_video.subclip(start_time, clip_end)
+            subclip = video_handle.subclip(start_time, clip_end)
             subclip.write_videofile(
                 output_filename, 
                 temp_audiofile=os.path.join(output, f"temp_audio_{id}.mp4"), # Changed to mp4/m4a
@@ -44,3 +51,9 @@ def extract_clip(clip: list, video: str, output: str, id: int, rating: float) ->
                 audio_codec="aac",    # Explicitly set audio codec
                 threads=4             # Limit threads to prevent memory spikes
             )
+
+    if main_video is None:
+        with VideoFileClip(video) as opened_video:
+            _write_clip(opened_video)
+    else:
+        _write_clip(main_video)
