@@ -1,64 +1,116 @@
-# AI Auto Clipper
+# 🎬 AI Auto Clipper
 
-AI Auto Clipper is a local-first pipeline that turns long videos into short, query-matched clips.
-It transcribes with Whisper, scans transcript chunks with an Ollama model, merges nearby matches, and exports MP4 clips.
+Turn long videos into short, query-matched clips with a local-first pipeline.
+AI Auto Clipper transcribes with Whisper, scans transcript chunks with Ollama, merges nearby matches, and exports MP4 clips.
 
-## What You Get
-- Local transcription with Whisper (`tiny` to `large`)
-- Local semantic clip selection through Ollama
-- Optional YouTube ingest (single links and channel monitoring)
-- Resume support through temp progress files
-- Automatic `torch` setup with CUDA detection (and CPU fallback)
+## ✨ What You Get
+- 🧠 Local transcription with Whisper (`tiny` to `large`)
+- 🤖 Local semantic clip selection with Ollama models
+- 📥 Optional YouTube ingest (direct links + channel monitoring)
+- 🔁 Resume-friendly temp/progress files
+- ⚡ Automatic `torch` setup with CUDA detection + CPU fallback
 
-## Quick Start (Windows)
-1. Install Python 3.10+ and make sure `python` works in `cmd`.
-2. Install FFmpeg and add it to `PATH`.
-3. Install Ollama and pull a model (example: `ollama pull llama3.2`).
-4. Run `settings.bat` and complete the setup wizard.
-5. Put video files in `input/`.
-6. Run `main.bat`.
-7. Find clips in `output/`.
+## 🚀 Fast Start (Windows)
 
-## Quick Start (macOS/Linux)
-1. Install Python 3.10+, FFmpeg, and Ollama.
-2. In the project root, run:
+### 1) Install prerequisites (PowerShell as Admin)
+```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.11 -e
+winget install --id Gyan.FFmpeg -e
+winget install --id Ollama.Ollama -e
+```
 
+### 2) Verify prerequisites
+```powershell
+git --version
+python --version
+ffmpeg -version
+ollama --version
+```
+
+### 3) Clone project
+```powershell
+git clone https://github.com/wessel05j/AI_Auto_clipper.git
+cd AI_Auto_clipper
+```
+
+### 4) Pull an Ollama model
+```powershell
+ollama pull llama3.2
+```
+
+### 5) Run setup wizard
+```powershell
+.\settings.bat
+```
+
+### 6) Add videos and run
+```powershell
+.\main.bat
+```
+
+Input videos go in `input/` and generated clips appear in `output/`.
+
+## 🐧🍎 Fast Start (macOS / Linux)
+
+### 1) Install prerequisites
+
+macOS (Homebrew):
 ```bash
-python -m venv venv
+brew install git python ffmpeg ollama
+```
+
+Ubuntu/Debian:
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv ffmpeg curl
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### 2) Verify prerequisites
+```bash
+git --version
+python3 --version
+ffmpeg -version
+ollama --version
+```
+
+### 3) Clone + enter project
+```bash
+git clone https://github.com/wessel05j/AI_Auto_clipper.git
+cd AI_Auto_clipper
+```
+
+### 4) Pull an Ollama model
+```bash
+ollama pull llama3.2
+```
+
+### 5) Create env + install deps (CUDA/CPU auto)
+```bash
+python3 -m venv venv
 source venv/bin/activate
 python setup_env.py --torch auto
+```
+
+### 6) Configure + run
+```bash
 python settings.py
 python main.py
 ```
 
-## Installation Notes
+Input videos go in `input/` and generated clips appear in `output/`.
 
-### Required External Tools
-- Python 3.10+
-- FFmpeg (needed by MoviePy/Whisper)
-- Ollama server + at least one pulled model
+## ⚡ CUDA / GPU Notes
+- `setup_env.py --torch auto` tries CUDA wheels first when NVIDIA tooling is detected.
+- If CUDA is unavailable, it falls back to CPU torch automatically.
+- Check status:
 
-### Python Dependencies
-`setup_env.py` installs:
-- `openai-whisper`
-- `moviepy==1.0.3`
-- `yt_dlp`
-- `requests`
-- `tiktoken`
-- `ollama`
-- `tqdm`
-- `numpy<2`
-- `torch` (auto CPU/CUDA mode)
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
+```
 
-### CUDA Automation
-You do not need to manually install a CUDA torch wheel anymore for normal usage.
-`setup_env.py --torch auto` does:
-1. Detects whether NVIDIA GPU tooling is available.
-2. Tries CUDA torch wheels.
-3. Falls back to CPU torch if CUDA is unavailable.
-
-Optional overrides:
-
+Optional modes:
 ```bash
 python setup_env.py --torch cuda
 python setup_env.py --torch cpu
@@ -66,23 +118,64 @@ python setup_env.py --torch skip
 python setup_env.py --torch auto --force
 ```
 
-Validation command:
+## 🧩 Daily Commands
+- Windows configure: `.\settings.bat`
+- Windows run: `.\main.bat`
+- Windows fetch channel links: `.\fetch_yt_links.bat`
+- macOS/Linux configure: `python settings.py`
+- macOS/Linux run: `python main.py`
+- macOS/Linux fetch channel links: `python fetch_yt_links.py`
 
-```bash
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
-```
+## 🛠️ Configuration
+All settings are saved in `system/settings.json`.
 
-## Run Commands
-- Configure: `settings.bat` (or `python settings.py`)
-- Clip videos: `main.bat` (or `python main.py`)
-- Fetch recent channel videos into queue: `fetch_yt_links.bat` (or `python fetch_yt_links.py`)
+Important keys:
+- `ai_model`
+- `transcribing_model`
+- `user_query`
+- `system_query` (default system prompt is already included automatically)
+- `total_tokens`
+- `max_chunking_tokens`
+- `max_ai_tokens`
+- `merge_distance`
+- `ai_loops`
+- `temperature`
+- `rerun_temp_files`
 
-All three `.bat` files route through `run_with_venv.bat`, which:
-1. Creates/activates `venv` if needed
-2. Runs `setup_env.py`
-3. Executes the requested script
+## 📺 YouTube Intake
 
-## Project Structure
+### Add direct links
+Use `settings.py` option `6` to add to `youtube_list`.
+
+### Monitor channels
+1. Add channel `/videos` URLs in option `11`
+2. Set hour window in option `12`
+3. Run `fetch_yt_links.py` (or `fetch_yt_links.bat`)
+
+### Cookies (if YouTube blocks downloads)
+Put `cookies.txt` in one of:
+- `resources/cookies.txt`
+- `system/cookies.txt`
+- project root `cookies.txt`
+
+## 🧭 Workflow
+1. Scan files in `input/`
+2. Transcribe with Whisper
+3. Chunk transcript to token budget
+4. Ask Ollama for `[start, end, score]` clip candidates
+5. Merge nearby segments
+6. Export clips to `output/`
+7. Move processed source video to `temp/`
+
+## 🆘 Troubleshooting
+- `Settings file not found`: run `settings.py` once first
+- `ffmpeg` errors: install FFmpeg and verify `ffmpeg -version`
+- No clips found: tighten `user_query`, increase `ai_loops`, lower `temperature`
+- Ollama errors: verify `ollama serve` and `ollama_url` in settings
+- Slow runtime: use `tiny`/`base` Whisper model or ensure CUDA is active
+- Download issues: refresh `cookies.txt` and retry
+
+## 📁 Project Layout
 ```text
 AI_Auto_clipper/
   main.py
@@ -99,51 +192,5 @@ AI_Auto_clipper/
     core_functionality/
 ```
 
-## Workflow
-1. Scan files in `input/`.
-2. Transcribe video with Whisper.
-3. Chunk transcript to fit token budget.
-4. Ask Ollama for matching clip timestamps.
-5. Merge nearby timestamps.
-6. Extract clips to `output/`.
-7. Move processed source video to `temp/`.
-
-## YouTube Intake
-
-### Add Direct Video Links
-Use `settings.py` option `6` and add links to `youtube_list`.
-
-### Monitor Channels
-1. In `settings.py`, set channel URLs in option `11`.
-2. Set hour window in option `12`.
-3. Run `fetch_yt_links.py` to add newly found links into `youtube_list`.
-
-### Cookies
-If YouTube blocks downloads, place `cookies.txt` in one of:
-- `resources/cookies.txt`
-- `system/cookies.txt`
-- project root `cookies.txt`
-
-## Key Config Fields (`system/settings.json`)
-- `ai_model`: Ollama model tag
-- `transcribing_model`: Whisper model size
-- `user_query`: what clips to search for
-- `system_query`: strict output contract for model responses
-- `total_tokens`: model context budget
-- `max_chunking_tokens`: computed chunk budget
-- `max_ai_tokens`: reserved response budget
-- `merge_distance`: merge nearby clips by seconds
-- `ai_loops`: repeated scans per chunk
-- `temperature`: creativity/randomness
-- `rerun_temp_files`: resume behavior toggle
-
-## Troubleshooting
-- `Settings file not found`: run `settings.py` once first.
-- `ffmpeg` errors: install FFmpeg and verify `ffmpeg -version`.
-- No clips found: tighten `user_query`, increase `ai_loops`, or lower `temperature`.
-- Ollama connection issues: verify `ollama serve` and `ollama_url` in settings.
-- Slow runtime: use smaller Whisper model (`tiny`/`base`) or enable CUDA.
-- Download issues: refresh `cookies.txt` and retry.
-
-## License
+## 📄 License
 Apache License 2.0 (`LICENSE`).
