@@ -29,6 +29,7 @@ source venv/bin/activate
 python setup_env.py --torch auto
 python settings.py
 python main.py
+```
 =======
 # 🎬 AI Auto Clipper
 
@@ -130,7 +131,7 @@ If not detected:
    ```bash
    pip uninstall torch -y
    pip install torch==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118
-   ```
+
 4. **Restart & verify**
 
 **Note**: Whisper needs 2-8GB VRAM depending on model size. CPU fallback works but is 5-10x slower.
