@@ -1,26 +1,34 @@
-import subprocess
 import logging
+import os
+import subprocess
 
-def ollama_off():
+
+def ollama_off() -> None:
     """
-    Forcefully terminates all Ollama processes and sub-processes 
-    to ensure 100% VRAM and RAM recovery.
+    Best-effort shutdown for local Ollama processes.
+    Windows uses taskkill; Unix uses pkill if available.
     """
     try:
-        # /F = Forcefully terminate the process
-        # /T = Terminates child processes as well (the actual model runners)
-        # /IM = Image Name (targets the process by name)
-        # Using 'ollama*' covers ollama.exe and any internal runner engines
+        if os.name == "nt":
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/IM", "ollama*"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                logging.debug("Successfully terminated Ollama processes.")
+            else:
+                logging.debug("Ollama was not running.")
+            return
+
         result = subprocess.run(
-            ["taskkill", "/F", "/T", "/IM", "ollama*"],
+            ["pkill", "-f", "ollama"],
             capture_output=True,
-            text=True
+            text=True,
         )
-        
         if result.returncode == 0:
-            logging.debug("Successfully terminated Ollama. Memory has been reclaimed.")
+            logging.debug("Successfully terminated Ollama processes.")
         else:
-            logging.debug("Ollama was not running.")
-            
+            logging.debug("Ollama was not running or pkill not available.")
     except Exception as e:
-        logging.error(f"An error occurred while trying to kill the process: {e}")
+        logging.error(f"An error occurred while trying to terminate Ollama: {e}")
