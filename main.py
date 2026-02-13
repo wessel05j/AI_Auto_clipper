@@ -309,7 +309,7 @@ def start() -> None:
                             for clip in output:
                                 start, end, score = clip[0], clip[1], clip[2] if len(clip) > 2 else "?"
                                 logging.info(f"Found clip: {start:.1f}s - {end:.1f}s (score: {score})")
-                                tqdm.write(f"  📎 Clip: {start:.1f}s - {end:.1f}s (score: {score})")
+                                tqdm.write(f"  [Clip] {start:.1f}s - {end:.1f}s (score: {score})")
                     AI_output.append(combined_outputs)
                 write(AI_FILE, AI_output)
                 logging.info(f"AI scanning complete, found {sum(len(x) for x in AI_output)} segments")
