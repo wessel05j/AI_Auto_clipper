@@ -17,7 +17,7 @@
 ### Windows 🪟
 1. **Install Python 3.10–3.11**: Download from [python.org](https://www.python.org/downloads/)
 2. **Install FFmpeg**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
-3. **Install Ollama**: Get it from [ollama.com](https://ollama.com/download) and pull a model: `ollama pull llama3.2`
+3. **Install Ollama**: Get it from [ollama.com](https://ollama.com/download) and pull a model: `ollama pull gpt-oss:20b` Suggested using a thinking model
 4. **Clone/Download this repo**
 
 ### macOS 🍎 / Linux 🐧
@@ -45,7 +45,7 @@ Install via `pip install -r requirements.txt`:
 ### First Time Setup
 1. Run `python settings.py` (or `settings.bat` on Windows)
 2. Follow the interactive wizard:
-   - Choose your Ollama model (e.g., `llama3.2`)
+   - Choose your Ollama model (e.g., `gpt-oss:20b`)
    - Pick Whisper model (`tiny` for speed, `large` for accuracy)
    - Enter your clip query (e.g., "Find funny moments")
    - Set max tokens, merge distance, etc.
