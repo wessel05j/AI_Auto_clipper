@@ -36,7 +36,7 @@ cd AI_Auto_clipper
 
 ### 4) Pull an Ollama model
 ```powershell
-ollama pull gpt/oss>20b
+ollama pull gpt-oss:20b
 ```
 
 ### 5) Run setup wizard
