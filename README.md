@@ -1,16 +1,6 @@
 # AI Auto Clipper
 
-<p align="center">
-  <img src="assets/ai-auto-clipper-logo.svg" alt="AI Auto Clipper Logo" width="100%" />
-</p>
-
-<p align="center">
-  <strong>OpusClip-style long-form to shorts pipeline, fully local and fully free.</strong>
-</p>
-
-<p align="center">
-  Whisper transcription • Ollama reasoning • yt-dlp ingestion • terminal dashboard
-</p>
+Local-first YouTube/long-form clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX.
 
 ## Highlights
 - One-command startup (`run.bat` or `run.ps1`)
