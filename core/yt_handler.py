@@ -1,0 +1,544 @@
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import parse_qs, urlparse
+
+import requests
+import yt_dlp
+
+from core.format_checker import choose_download_format
+
+
+class _SilentYDLLogger:
+    def debug(self, _: str) -> None:
+        return None
+
+    def warning(self, _: str) -> None:
+        return None
+
+    def error(self, _: str) -> None:
+        return None
+
+
+class YTHandler:
+    DEFAULT_BROWSERS = ("firefox", "edge", "chrome", "brave", "opera", "vivaldi")
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
+    _VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+    _CHANNEL_PATH_HINTS = ("@", "channel/", "c/", "user/")
+
+    def __init__(
+        self,
+        base_dir: Path,
+        logger: logging.Logger,
+        browser_priority: Optional[Sequence[str]] = None,
+    ) -> None:
+        self.base_dir = Path(base_dir)
+        self.logger = logger
+        self.browser_priority = tuple(browser_priority or self.DEFAULT_BROWSERS)
+
+        self._cookies_checked = False
+        self._cookies_file: Optional[Path] = None
+        self._browser_cookies: Optional[Tuple[str, ...]] = None
+        self._download_history_cache: Optional[set[str]] = None
+        self._fetched_history_cache: Optional[set[str]] = None
+
+        self.download_history_file.parent.mkdir(parents=True, exist_ok=True)
+        self.fetched_history_file.parent.mkdir(parents=True, exist_ok=True)
+        self.download_history_file.touch(exist_ok=True)
+        self.fetched_history_file.touch(exist_ok=True)
+
+    @property
+    def download_history_file(self) -> Path:
+        return self.base_dir / "system" / "downloaded_youtube_links.txt"
+
+    @property
+    def fetched_history_file(self) -> Path:
+        return self.base_dir / "system" / "fetched_youtube_links.txt"
+
+    @classmethod
+    def normalize_video_url(cls, raw_url: str) -> str:
+        value = (raw_url or "").strip()
+        if not value:
+            return value
+
+        if cls._VIDEO_ID_PATTERN.fullmatch(value):
+            return f"https://www.youtube.com/watch?v={value}"
+
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            return value
+
+        netloc = parsed.netloc.lower()
+        path = parsed.path or ""
+        video_id: Optional[str] = None
+
+        if "youtu.be" in netloc:
+            candidate = path.strip("/").split("/")[0]
+            if cls._VIDEO_ID_PATTERN.fullmatch(candidate):
+                video_id = candidate
+        elif "youtube.com" in netloc:
+            if path == "/watch":
+                query = parse_qs(parsed.query)
+                candidate = (query.get("v") or [None])[0]
+                if candidate and cls._VIDEO_ID_PATTERN.fullmatch(candidate):
+                    video_id = candidate
+            else:
+                parts = [part for part in path.split("/") if part]
+                if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live"}:
+                    candidate = parts[1]
+                    if cls._VIDEO_ID_PATTERN.fullmatch(candidate):
+                        video_id = candidate
+
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+        return value
+
+    @classmethod
+    def normalize_channel_url(cls, raw_url: str) -> str:
+        value = (raw_url or "").strip().strip('"').strip("'")
+        if not value:
+            return ""
+
+        if value.startswith("@"):
+            value = f"https://www.youtube.com/{value}"
+        elif "://" not in value:
+            value = f"https://www.youtube.com/{value.lstrip('/')}"
+
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            return ""
+
+        netloc = parsed.netloc.lower()
+        if "youtube.com" not in netloc and "youtu.be" not in netloc:
+            return ""
+
+        path = parsed.path.strip("/")
+        if not path:
+            return ""
+
+        if path.startswith("watch"):
+            return ""
+
+        if path.startswith(cls._CHANNEL_PATH_HINTS):
+            base = path
+            if base.endswith("/videos"):
+                base = base[:-7].rstrip("/")
+            return f"https://www.youtube.com/{base}/videos"
+
+        return ""
+
+    def _load_download_history(self) -> set[str]:
+        if self._download_history_cache is not None:
+            return set(self._download_history_cache)
+
+        history: set[str] = set()
+        with self.download_history_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                normalized = self.normalize_video_url(line.strip())
+                if normalized:
+                    history.add(normalized)
+        self._download_history_cache = set(history)
+        return history
+
+    def _add_to_download_history(self, url: str) -> None:
+        normalized = self.normalize_video_url(url)
+        if not normalized:
+            return
+
+        history = self._load_download_history()
+        if normalized in history:
+            return
+
+        with self.download_history_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"{normalized}\n")
+        history.add(normalized)
+        self._download_history_cache = history
+
+    def _load_fetched_history(self) -> set[str]:
+        if self._fetched_history_cache is not None:
+            return set(self._fetched_history_cache)
+
+        history: set[str] = set()
+        with self.fetched_history_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                normalized = self.normalize_video_url(line.strip())
+                if normalized:
+                    history.add(normalized)
+        self._fetched_history_cache = set(history)
+        return history
+
+    def _add_to_fetched_history(self, url: str) -> None:
+        normalized = self.normalize_video_url(url)
+        if not normalized:
+            return
+
+        history = self._load_fetched_history()
+        if normalized in history:
+            return
+
+        with self.fetched_history_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"{normalized}\n")
+        history.add(normalized)
+        self._fetched_history_cache = history
+
+    def mark_links_as_fetched(self, links: Sequence[str]) -> None:
+        for link in links:
+            self._add_to_fetched_history(str(link))
+
+    def is_already_fetched(self, url: str) -> bool:
+        normalized = self.normalize_video_url(url)
+        return normalized in self._load_fetched_history()
+
+    def is_in_history(self, url: str) -> bool:
+        normalized = self.normalize_video_url(url)
+        return normalized in self._load_download_history()
+
+    def _find_cookie_file(self) -> Optional[Path]:
+        for candidate in (
+            self.base_dir / "resources" / "cookies.txt",
+            self.base_dir / "system" / "cookies.txt",
+            self.base_dir / "cookies.txt",
+        ):
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return candidate
+        return None
+
+    def _browser_cookie_source_is_valid(self, browser: str) -> bool:
+        test_opts: Dict[str, Any] = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "playlist_items": "1",
+            "cookiesfrombrowser": (browser,),
+            "ignoreerrors": True,
+            "no_warnings": True,
+            "ignoreconfig": True,
+            "logger": _SilentYDLLogger(),
+        }
+        try:
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                result = ydl.extract_info("https://www.youtube.com/@YouTube/videos", download=False)
+            if result and result.get("entries"):
+                self.logger.info("Using browser cookies from: %s", browser)
+                return True
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "dpapi" in error_text or "decrypt" in error_text:
+                self.logger.warning(
+                    "Cannot read %s cookies while browser is open/encrypted. Skipping browser cookies.",
+                    browser,
+                )
+                return False
+        return False
+
+    def _detect_cookies(self) -> None:
+        if self._cookies_checked:
+            return
+        self._cookies_checked = True
+
+        self._cookies_file = self._find_cookie_file()
+        if self._cookies_file:
+            self.logger.info("Using cookie file: %s", self._cookies_file)
+            return
+
+        for browser in self.browser_priority:
+            if self._browser_cookie_source_is_valid(browser):
+                self._browser_cookies = (browser,)
+                return
+
+        self.logger.warning("No cookies detected. Some YouTube videos may be unavailable.")
+
+    def _apply_cookies_to_opts(self, ydl_opts: Dict[str, Any]) -> None:
+        self._detect_cookies()
+        ydl_opts.pop("cookiefile", None)
+        ydl_opts.pop("cookiesfrombrowser", None)
+        if self._cookies_file:
+            ydl_opts["cookiefile"] = str(self._cookies_file)
+        elif self._browser_cookies:
+            ydl_opts["cookiesfrombrowser"] = self._browser_cookies
+
+    @staticmethod
+    def _resolve_channel_id(result: Dict[str, Any], channel_url: str) -> Optional[str]:
+        candidates: List[str] = []
+        for key in ("channel_id", "uploader_id", "id", "webpage_url", "channel_url"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+        candidates.append(channel_url)
+
+        for candidate in candidates:
+            if candidate.startswith("UC") and len(candidate) >= 20:
+                return candidate
+            if candidate.startswith("UU") and len(candidate) >= 20:
+                return f"UC{candidate[2:]}"
+            match = re.search(r"/channel/(UC[\w-]+)", candidate)
+            if match:
+                return match.group(1)
+        return None
+
+    def fetch_recent_links(
+        self,
+        channels: Sequence[str],
+        hours_limit: int = 24,
+        playlistend: int = 15,
+    ) -> List[str]:
+        threshold = datetime.now() - timedelta(hours=max(1, int(hours_limit)))
+        downloaded_history = self._load_download_history()
+        fetched_history = self._load_fetched_history()
+        seen: set[str] = set()
+        links_found: List[str] = []
+
+        list_opts: Dict[str, Any] = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "playlistend": 1,
+            "ignoreerrors": True,
+            "no_warnings": True,
+            "socket_timeout": 30,
+            "ignoreconfig": True,
+            "logger": _SilentYDLLogger(),
+        }
+        self._apply_cookies_to_opts(list_opts)
+
+        with yt_dlp.YoutubeDL(list_opts) as ydl:
+            for channel_url in channels:
+                normalized_channel = self.normalize_channel_url(str(channel_url))
+                if not normalized_channel:
+                    self.logger.warning("Skipping invalid channel URL: %s", channel_url)
+                    continue
+                try:
+                    result = ydl.extract_info(normalized_channel, download=False)
+                except Exception as exc:
+                    self.logger.warning("Could not inspect channel %s: %s", normalized_channel, exc)
+                    continue
+                if not isinstance(result, dict):
+                    continue
+
+                channel_id = self._resolve_channel_id(result, normalized_channel)
+                if not channel_id:
+                    self.logger.warning("Unable to resolve channel ID for %s", normalized_channel)
+                    continue
+
+                rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+                try:
+                    response = requests.get(
+                        rss_url,
+                        timeout=15,
+                        headers={"User-Agent": self.USER_AGENT},
+                    )
+                except Exception as exc:
+                    self.logger.warning("Failed RSS request for %s: %s", normalized_channel, exc)
+                    continue
+                if response.status_code != 200:
+                    self.logger.warning(
+                        "RSS request failed for %s (status %s)",
+                        normalized_channel,
+                        response.status_code,
+                    )
+                    continue
+
+                count = 0
+                entries = re.findall(r"<entry>.*?</entry>", response.text, flags=re.DOTALL)
+                for entry in entries:
+                    video_match = re.search(r"<yt:videoId>([^<]+)</yt:videoId>", entry)
+                    published_match = re.search(r"<published>([^<]+)</published>", entry)
+                    if not video_match or not published_match:
+                        continue
+
+                    try:
+                        published = datetime.fromisoformat(
+                            published_match.group(1).replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                    except ValueError:
+                        continue
+                    if published < threshold:
+                        break
+
+                    url = self.normalize_video_url(
+                        f"https://www.youtube.com/watch?v={video_match.group(1).strip()}"
+                    )
+                    if not url or url in downloaded_history or url in fetched_history or url in seen:
+                        continue
+
+                    seen.add(url)
+                    links_found.append(url)
+                    fetched_history.add(url)
+                    self._add_to_fetched_history(url)
+                    count += 1
+                    if count >= max(1, int(playlistend)):
+                        break
+
+        return links_found
+
+    @staticmethod
+    def _new_video_files(before: List[Path], after: List[Path]) -> List[Path]:
+        known_paths = {str(path.resolve()) for path in before}
+        valid_exts = {".mp4", ".mkv", ".webm", ".mov"}
+        created: List[Path] = []
+        for path in after:
+            if str(path.resolve()) in known_paths:
+                continue
+            if path.suffix.lower() not in valid_exts:
+                continue
+            if path.suffix.lower() in {".part", ".ytdl"}:
+                continue
+            if path.is_file():
+                created.append(path)
+        return created
+
+    def _probe_and_decide_format(self, target_url: str, ydl_opts: Dict[str, Any]) -> Tuple[str, str]:
+        probe_opts = dict(ydl_opts)
+        probe_opts.update(
+            {
+                "skip_download": True,
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+            }
+        )
+        with yt_dlp.YoutubeDL(probe_opts) as ydl:
+            info = ydl.extract_info(target_url, download=False)
+        if not isinstance(info, dict):
+            return "bestvideo+bestaudio/best", "generic-fallback"
+        decision = choose_download_format(info)
+        return decision.format_string, decision.strategy
+
+    def download_video(
+        self,
+        url: str,
+        output_dir: Path,
+        filename_template: str = "%(title).200B.%(ext)s",
+    ) -> Optional[str]:
+        normalized = self.normalize_video_url(url)
+        if self.is_in_history(normalized):
+            self.logger.info("Skipping already downloaded URL: %s", normalized)
+            return None
+
+        target_url = normalized or url
+        output_dir.mkdir(parents=True, exist_ok=True)
+        before_files = list(output_dir.glob("*"))
+
+        base_opts: Dict[str, Any] = {
+            "merge_output_format": "mp4",
+            "outtmpl": str(output_dir / filename_template),
+            "quiet": True,
+            "noprogress": True,
+            "js_runtimes": {"node": {}, "deno": {}},
+            "remote_components": ["ejs:github"],
+            "http_headers": {
+                "User-Agent": self.USER_AGENT,
+                "Accept-Language": "en-us,en;q=0.5",
+            },
+            "socket_timeout": 60,
+            "retries": 15,
+            "fragment_retries": 15,
+            "skip_unavailable_fragments": True,
+            "ignoreerrors": False,
+            "allow_unplayable_formats": False,
+            "ignoreconfig": True,
+            "noplaylist": True,
+            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
+        }
+
+        strategies: List[Dict[str, Any]] = [
+            {
+                "name": "cookies-default-clients",
+                "use_cookies": True,
+                "extractor_args": {"youtube": {"player_client": ["tv_downgraded", "web", "web_safari"]}},
+            },
+            {
+                "name": "cookies-mobile-clients",
+                "use_cookies": True,
+                "extractor_args": {"youtube": {"player_client": ["ios_downgraded", "android_vr", "web"]}},
+            },
+            {
+                "name": "no-cookies-mobile",
+                "use_cookies": False,
+                "extractor_args": {"youtube": {"player_client": ["ios_downgraded", "android_vr"]}},
+            },
+            {
+                "name": "no-cookies-generic",
+                "use_cookies": False,
+            },
+        ]
+
+        for strategy in strategies:
+            ydl_opts = dict(base_opts)
+            if strategy.get("extractor_args"):
+                ydl_opts["extractor_args"] = strategy["extractor_args"]
+
+            if strategy.get("use_cookies", True):
+                self._apply_cookies_to_opts(ydl_opts)
+            else:
+                ydl_opts.pop("cookiefile", None)
+                ydl_opts.pop("cookiesfrombrowser", None)
+
+            try:
+                selected_format, format_strategy = self._probe_and_decide_format(target_url, ydl_opts)
+                ydl_opts["format"] = selected_format
+            except Exception as exc:
+                self.logger.warning(
+                    "Format probe failed for strategy '%s' on %s: %s",
+                    strategy["name"],
+                    target_url,
+                    exc,
+                )
+                ydl_opts["format"] = "bestvideo+bestaudio/best"
+                format_strategy = "generic-fallback"
+
+            self.logger.info(
+                "Downloading with %s (%s): %s",
+                strategy["name"],
+                format_strategy,
+                target_url,
+            )
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    code = ydl.download([target_url])
+            except Exception as exc:
+                self.logger.warning(
+                    "Download strategy '%s' failed for %s: %s",
+                    strategy["name"],
+                    target_url,
+                    exc,
+                )
+                continue
+
+            if code not in (None, 0):
+                self.logger.warning(
+                    "yt-dlp returned non-zero status %s for %s using '%s'",
+                    code,
+                    target_url,
+                    strategy["name"],
+                )
+                continue
+
+            created_files = self._new_video_files(before_files, list(output_dir.glob("*")))
+            if not created_files:
+                self.logger.warning("No file created for %s with strategy '%s'", target_url, strategy["name"])
+                continue
+
+            created_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+            downloaded = created_files[0]
+            size = downloaded.stat().st_size
+            if size < 10_000:
+                self.logger.warning("Downloaded file too small (%s bytes): %s", size, downloaded.name)
+                downloaded.unlink(missing_ok=True)
+                continue
+
+            self._add_to_download_history(target_url)
+            self.logger.info("Download succeeded for %s (%s)", target_url, downloaded.name)
+            return str(downloaded)
+
+        return None

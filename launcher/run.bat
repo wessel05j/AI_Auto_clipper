@@ -1,19 +1,11 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-
-if "%~1"=="" (
-    echo Usage: run_with_venv.bat script.py [args...]
-    exit /b 1
-)
-
-set "TARGET_SCRIPT=%~1"
-shift
+cd /d "%~dp0\.."
 
 python --version >nul 2>&1
 if errorlevel 1 (
     echo Error: Python is not installed or not in PATH.
-    echo Install Python from https://www.python.org/downloads/
+    echo Install Python 3.10+ from https://www.python.org/downloads/
     exit /b 1
 )
 
@@ -32,16 +24,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Preparing dependencies...
+echo Preparing runtime dependencies...
 python setup_env.py --torch auto
 if errorlevel 1 (
-    echo Error: Environment setup failed.
+    echo Error: Dependency setup failed.
     call venv\Scripts\deactivate.bat >nul 2>&1
     exit /b 1
 )
 
-python "%TARGET_SCRIPT%" %*
+python main.py %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 call venv\Scripts\deactivate.bat >nul 2>&1
 exit /b %EXIT_CODE%
+

@@ -1,82 +1,41 @@
-# 🎬 AI Auto Clipper
+# AI Auto Clipper
 
-Turn long videos into short, query-matched clips with a local-first pipeline.
-AI Auto Clipper transcribes with Whisper, scans transcript chunks with Ollama, merges nearby matches, and exports MP4 clips.
+Local-first clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX. OpusClip but free!
 
-## ✨ What You Get
-- 🧠 Local transcription with Whisper (`tiny` to `large`)
-- 🤖 Local semantic clip selection with Ollama models
-- 📥 Optional YouTube ingest (direct links + channel monitoring)
-- 🔁 Resume-friendly temp/progress files
-- ⚡ Automatic `torch` setup with CUDA detection + CPU fallback
+## Highlights
+- One-command startup (`run.bat` or `run.ps1`)
+- First-run setup wizard with hardware detection and model auto-pull
+- Rich terminal dashboard with status and settings
+- YouTube queue manager (fetch, add, replace, remove, clear)
+- Live Activity Panel with AI clipping and extraction counters
+- Robust yt-dlp format fallback (`2K -> 1080p -> progressive`)
+- AI clipping pipeline (scan -> merge -> filter -> extract)
+- Strict AI JSON parsing with retries and schema validation
+- Thinking-model policy (`>=8b`) enforced in setup + settings
+- Temp archive cleanup policy (never / max size / max age)
+- Clean modular architecture for public/demo use
 
-## 🚀 Fast Start (Windows)
-
-### 1) Install prerequisites (PowerShell as Admin)
+## Quick Start (Windows)
+1. Install prerequisites:
 ```powershell
-winget install --id Git.Git -e
 winget install --id Python.Python.3.11 -e
 winget install --id Gyan.FFmpeg -e
 winget install --id Ollama.Ollama -e
 ```
-
-### 2) Verify prerequisites
-```powershell
-git --version
-python --version
-ffmpeg -version
-ollama --version
-```
-
-### 3) Clone project
+2. Clone the repo:
 ```powershell
 git clone https://github.com/wessel05j/AI_Auto_clipper.git
 cd AI_Auto_clipper
 ```
-
-### 4) Pull an Ollama model
+3. Run:
 ```powershell
 ollama pull gpt-oss:20b
 ```
 
-### 5) Run setup wizard
+No manual model pull is required. The setup wizard handles model recommendation and pull automatically.
+
+## Quick Start (PowerShell)
 ```powershell
-.\settings.bat
-```
-
-### 6) Add videos and run
-```powershell
-.\main.bat
-```
-
-Input videos go in `input/` and generated clips appear in `output/`.
-
-## 🐧🍎 Fast Start (macOS / Linux)
-
-### 1) Install prerequisites
-
-macOS (Homebrew):
-```bash
-brew install git python ffmpeg ollama
-```
-
-Ubuntu/Debian:
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv ffmpeg curl
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-### 2) Verify prerequisites
-```bash
-git --version
-python3 --version
-ffmpeg -version
-ollama --version
-```
-
-### 3) Clone + enter project
-```bash
 git clone https://github.com/wessel05j/AI_Auto_clipper.git
 cd AI_Auto_clipper
 ```
@@ -98,7 +57,6 @@ python setup_env.py --torch auto
 python settings.py
 python main.py
 ```
-=======
 # 🎬 AI Auto Clipper
 
 **Like OpusClip, but free!** 🚀 An automatic AI-powered video clip extractor that discovers videos, transcribes them with Whisper, uses local LLMs via Ollama to find interesting segments based on your query, and exports matching clips as MP4 files. No code editing needed – just run and configure interactively!
@@ -288,19 +246,43 @@ Put `cookies.txt` in one of:
 ## 📁 Project Layout
 ```text
 AI_Auto_clipper/
-  main.py
-  settings.py
-  fetch_yt_links.py
-  setup_env.py
-  run_with_venv.bat
-  input/
-  output/
-  system/
-  temp/
-  programs/
-    components/
-    core_functionality/
+|-- launcher/
+|   |-- run.bat
+|   `-- run.ps1
+|-- core/
+|   |-- engine.py
+|   |-- clipping.py
+|   |-- ai_pipeline.py
+|   |-- yt_handler.py
+|   `-- format_checker.py
+|-- ui/
+|   |-- setup_wizard.py
+|   |-- dashboard.py
+|   `-- components.py
+|-- config/
+|   |-- config.json
+|   |-- hardware_profile.json
+|   |-- model_profile.json
+|   `-- .gitkeep
+|-- logs/
+|   `-- .gitkeep
+|-- utils/
+|   |-- hardware_detect.py
+|   |-- model_selector.py
+|   `-- validators.py
+`-- main.py
 ```
 
-## 📄 License
-Apache License 2.0 (`LICENSE`).
+## Notes
+- Input videos: `input/`
+- Exported clips: `output/`
+- Processed source archive: `temp/`
+- Merged candidates are filtered by duration constraints before final extraction
+- Runtime logs: `logs/app.log`
+
+## Compatibility
+- Windows-first launcher UX
+- Local GPU or CPU inference supported
+
+## License
+Apache License 2.0 (`LICENSE`)
