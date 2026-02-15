@@ -1,4 +1,5 @@
 @echo off
 cd /d "%~dp0"
-call run_with_venv.bat settings.py %*
+call launcher\run.bat %*
 exit /b %ERRORLEVEL%
+

@@ -1,19 +1,17 @@
 # Ignore raw video assets
 videos/
 __pycache__/
-programs/__pycache__/
-programs/setup_stage/__pycache__
-programs/core_functionality/__pycache__
-programs/components/__pycache__
+*/__pycache__/
 output/
 input/
-system/transcribed.json
-system/AI.json
-system/Clips.json
 system/
 temp/
 venv/
 lm_studio_path.cfg
+logs/*.log
+config/*.json
+!config/.gitkeep
+!logs/.gitkeep
 # (Optional) Uncomment more rules if desired
 # output/
 # system/*.json

@@ -7,3 +7,5 @@ tiktoken
 ollama
 tqdm
 numpy<2
+rich
+psutil
