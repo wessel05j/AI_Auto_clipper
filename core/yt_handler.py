@@ -48,13 +48,20 @@ class YTHandler:
         self._cookies_file: Optional[Path] = None
         self._browser_cookies: Optional[Tuple[str, ...]] = None
         self._download_history_cache: Optional[set[str]] = None
+        self._fetched_history_cache: Optional[set[str]] = None
 
         self.download_history_file.parent.mkdir(parents=True, exist_ok=True)
+        self.fetched_history_file.parent.mkdir(parents=True, exist_ok=True)
         self.download_history_file.touch(exist_ok=True)
+        self.fetched_history_file.touch(exist_ok=True)
 
     @property
     def download_history_file(self) -> Path:
         return self.base_dir / "system" / "downloaded_youtube_links.txt"
+
+    @property
+    def fetched_history_file(self) -> Path:
+        return self.base_dir / "system" / "fetched_youtube_links.txt"
 
     @classmethod
     def normalize_video_url(cls, raw_url: str) -> str:
@@ -157,6 +164,41 @@ class YTHandler:
         history.add(normalized)
         self._download_history_cache = history
 
+    def _load_fetched_history(self) -> set[str]:
+        if self._fetched_history_cache is not None:
+            return set(self._fetched_history_cache)
+
+        history: set[str] = set()
+        with self.fetched_history_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                normalized = self.normalize_video_url(line.strip())
+                if normalized:
+                    history.add(normalized)
+        self._fetched_history_cache = set(history)
+        return history
+
+    def _add_to_fetched_history(self, url: str) -> None:
+        normalized = self.normalize_video_url(url)
+        if not normalized:
+            return
+
+        history = self._load_fetched_history()
+        if normalized in history:
+            return
+
+        with self.fetched_history_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"{normalized}\n")
+        history.add(normalized)
+        self._fetched_history_cache = history
+
+    def mark_links_as_fetched(self, links: Sequence[str]) -> None:
+        for link in links:
+            self._add_to_fetched_history(str(link))
+
+    def is_already_fetched(self, url: str) -> bool:
+        normalized = self.normalize_video_url(url)
+        return normalized in self._load_fetched_history()
+
     def is_in_history(self, url: str) -> bool:
         normalized = self.normalize_video_url(url)
         return normalized in self._load_download_history()
@@ -252,6 +294,7 @@ class YTHandler:
     ) -> List[str]:
         threshold = datetime.now() - timedelta(hours=max(1, int(hours_limit)))
         downloaded_history = self._load_download_history()
+        fetched_history = self._load_fetched_history()
         seen: set[str] = set()
         links_found: List[str] = []
 
@@ -325,11 +368,13 @@ class YTHandler:
                     url = self.normalize_video_url(
                         f"https://www.youtube.com/watch?v={video_match.group(1).strip()}"
                     )
-                    if not url or url in downloaded_history or url in seen:
+                    if not url or url in downloaded_history or url in fetched_history or url in seen:
                         continue
 
                     seen.add(url)
                     links_found.append(url)
+                    fetched_history.add(url)
+                    self._add_to_fetched_history(url)
                     count += 1
                     if count >= max(1, int(playlistend)):
                         break

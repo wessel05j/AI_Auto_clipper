@@ -1,11 +1,22 @@
 # AI Auto Clipper
 
-Local-first YouTube/long-form clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX.
+<p align="center">
+  <img src="assets/ai-auto-clipper-logo.svg" alt="AI Auto Clipper Logo" width="100%" />
+</p>
+
+<p align="center">
+  <strong>OpusClip-style long-form to shorts pipeline, fully local and fully free.</strong>
+</p>
+
+<p align="center">
+  Whisper transcription • Ollama reasoning • yt-dlp ingestion • terminal dashboard
+</p>
 
 ## Highlights
 - One-command startup (`run.bat` or `run.ps1`)
 - First-run setup wizard with hardware detection and model auto-pull
 - Rich terminal dashboard with status and settings
+- YouTube queue manager (fetch, add, replace, remove, clear)
 - Live Activity Panel with AI clipping and extraction counters
 - Robust yt-dlp format fallback (`2K -> 1080p -> progressive`)
 - AI clipping pipeline (scan -> merge -> filter -> extract)
@@ -72,7 +83,7 @@ cd AI_Auto_clipper
 After setup, the main dashboard provides:
 - `Launch Clipping Engine`
 - `Change Settings`
-- `Fetch YouTube Links`
+- `Manage YouTube Queue`
 - `Re-run Setup Wizard`
 - `Edit System Prompt`
 - `Exit`

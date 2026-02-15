@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -32,6 +33,7 @@ class Dashboard:
     """Main dashboard shown after setup is complete."""
 
     _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+    _YOUTUBE_WATCH_URL_PATTERN = re.compile(r"^https://www\.youtube\.com/watch\?v=[A-Za-z0-9_-]{11}$")
 
     def __init__(self, base_dir: Path, config: Dict[str, Any], console: Console, logger: logging.Logger) -> None:
         self.base_dir = base_dir
@@ -43,6 +45,41 @@ class Dashboard:
 
     def _save_config(self) -> None:
         save_json_file(self._paths["config_file"], self.config)
+
+    @classmethod
+    def _parse_video_link_input(cls, raw_value: str) -> List[str]:
+        return [item.strip() for item in re.split(r"[\s,]+", str(raw_value).strip()) if item.strip()]
+
+    @classmethod
+    def _normalize_video_links(cls, links: List[str]) -> tuple[List[str], List[str]]:
+        normalized_links: List[str] = []
+        invalid_links: List[str] = []
+        seen: set[str] = set()
+
+        for link in links:
+            raw_link = str(link).strip()
+            if not raw_link:
+                continue
+            normalized = YTHandler.normalize_video_url(raw_link)
+            if not cls._YOUTUBE_WATCH_URL_PATTERN.fullmatch(normalized):
+                invalid_links.append(raw_link)
+                continue
+            if normalized in seen:
+                continue
+            normalized_links.append(normalized)
+            seen.add(normalized)
+        return normalized_links, invalid_links
+
+    def _set_youtube_queue(self, youtube_links: List[str]) -> bool:
+        snapshot = copy.deepcopy(self.config)
+        self.config["clipping"]["youtube_links"] = list(youtube_links)
+        errors = validate_config(self.config)
+        if errors:
+            self.config = snapshot
+            self.console.print(f"[red]Queue update rejected: {errors[0]}[/red]")
+            return False
+        self._save_config()
+        return True
 
     def _resolve_path(self, configured_path: str) -> Path:
         path = Path(str(configured_path))
@@ -151,7 +188,7 @@ class Dashboard:
                 (
                     "[bold cyan]1.[/bold cyan] Launch Clipping Engine\n"
                     "[bold cyan]2.[/bold cyan] Change Settings\n"
-                    "[bold cyan]3.[/bold cyan] Fetch YouTube Links\n"
+                    "[bold cyan]3.[/bold cyan] Manage YouTube Queue\n"
                     "[bold cyan]4.[/bold cyan] Re-run Setup Wizard\n"
                     "[bold cyan]5.[/bold cyan] Edit System Prompt\n"
                     "[bold cyan]6.[/bold cyan] Exit\n"
@@ -194,6 +231,138 @@ class Dashboard:
 
         added = len(current) - before_count
         self.console.print(f"[green]Fetched {len(links)} links, added {added} new links to queue.[/green]")
+
+    def _manage_youtube_queue(self) -> None:
+        while True:
+            hard_clear(self.console)
+            show_header(self.console)
+
+            youtube_links = list(self.config["clipping"].get("youtube_links", []))
+            table = Table(title="YouTube Queue", show_lines=True)
+            table.add_column("#", style="cyan", no_wrap=True)
+            table.add_column("Video URL", style="white")
+            table.add_column("Status", style="white")
+            if youtube_links:
+                for index, link in enumerate(youtube_links, start=1):
+                    status = "Downloaded" if self.yt_handler.is_in_history(link) else "Queued"
+                    table.add_row(str(index), link, status)
+            else:
+                table.add_row("-", "No queued links", "-")
+            self.console.print(table)
+
+            self.console.print(
+                Panel(
+                    (
+                        "[bold cyan]1.[/bold cyan] Fetch recent links from channels\n"
+                        "[bold cyan]2.[/bold cyan] Add links manually\n"
+                        "[bold cyan]3.[/bold cyan] Remove queued link by index\n"
+                        "[bold cyan]4.[/bold cyan] Replace entire queue\n"
+                        "[bold cyan]5.[/bold cyan] Remove already-downloaded links\n"
+                        "[bold cyan]6.[/bold cyan] Clear queue\n"
+                        "[bold cyan]0.[/bold cyan] Back"
+                    ),
+                    title="Queue Actions",
+                    border_style="cyan",
+                )
+            )
+
+            action = Prompt.ask("Choose an action", default="0").strip()
+            if action == "0":
+                return
+
+            if action == "1":
+                self._fetch_youtube_links()
+                input("Press Enter to continue...")
+                continue
+
+            if action == "2":
+                raw = Prompt.ask("Paste YouTube links or 11-char IDs (comma/space separated)").strip()
+                parsed = self._parse_video_link_input(raw)
+                normalized, invalid = self._normalize_video_links(parsed)
+                if not normalized:
+                    self.console.print("[yellow]No valid YouTube links were provided.[/yellow]")
+                    if invalid:
+                        preview = ", ".join(invalid[:3])
+                        suffix = "" if len(invalid) <= 3 else f" (+{len(invalid) - 3} more)"
+                        self.console.print(f"[yellow]Ignored: {preview}{suffix}[/yellow]")
+                    input("Press Enter to continue...")
+                    continue
+
+                merged = list(youtube_links)
+                before_count = len(merged)
+                for link in normalized:
+                    if link not in merged:
+                        merged.append(link)
+
+                if self._set_youtube_queue(merged):
+                    added = len(merged) - before_count
+                    self.console.print(
+                        f"[green]Added {added} link(s). Queue now has {len(merged)} link(s).[/green]"
+                    )
+                if invalid:
+                    preview = ", ".join(invalid[:3])
+                    suffix = "" if len(invalid) <= 3 else f" (+{len(invalid) - 3} more)"
+                    self.console.print(f"[yellow]Ignored invalid entries: {preview}{suffix}[/yellow]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "3":
+                if not youtube_links:
+                    input("No queued links to remove. Press Enter...")
+                    continue
+                idx = IntPrompt.ask("Index to remove", default=1)
+                if not (1 <= idx <= len(youtube_links)):
+                    input("Invalid index. Press Enter...")
+                    continue
+                removed = youtube_links[idx - 1]
+                del youtube_links[idx - 1]
+                if self._set_youtube_queue(youtube_links):
+                    self.console.print(f"[green]Removed: {removed}[/green]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "4":
+                raw = Prompt.ask("Paste replacement YouTube links or IDs (comma/space separated)").strip()
+                parsed = self._parse_video_link_input(raw)
+                normalized, invalid = self._normalize_video_links(parsed)
+                if not normalized and not Confirm.ask("No valid links found. Replace queue with empty list?", default=False):
+                    continue
+                if self._set_youtube_queue(normalized):
+                    self.console.print(f"[green]Queue replaced. New size: {len(normalized)} link(s).[/green]")
+                if invalid:
+                    preview = ", ".join(invalid[:3])
+                    suffix = "" if len(invalid) <= 3 else f" (+{len(invalid) - 3} more)"
+                    self.console.print(f"[yellow]Ignored invalid entries: {preview}{suffix}[/yellow]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "5":
+                if not youtube_links:
+                    input("Queue is already empty. Press Enter...")
+                    continue
+                remaining = [link for link in youtube_links if not self.yt_handler.is_in_history(link)]
+                removed_count = len(youtube_links) - len(remaining)
+                if removed_count == 0:
+                    self.console.print("[yellow]No queued links were found in download history.[/yellow]")
+                    input("Press Enter to continue...")
+                    continue
+                if self._set_youtube_queue(remaining):
+                    self.console.print(f"[green]Removed {removed_count} already-downloaded link(s).[/green]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "6":
+                if not youtube_links:
+                    input("Queue is already empty. Press Enter...")
+                    continue
+                if not Confirm.ask("Clear all queued YouTube links?", default=False):
+                    continue
+                if self._set_youtube_queue([]):
+                    self.console.print("[green]Queue cleared.[/green]")
+                input("Press Enter to continue...")
+                continue
+
+            input("Invalid option. Press Enter...")
 
     def _manage_channels(self) -> None:
         while True:
@@ -671,8 +840,7 @@ class Dashboard:
             elif choice == "2":
                 self._change_settings()
             elif choice == "3":
-                self._fetch_youtube_links()
-                input("Press Enter to continue...")
+                self._manage_youtube_queue()
             elif choice == "4":
                 self._rerun_setup_wizard()
                 input("Press Enter to continue...")
