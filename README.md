@@ -1,6 +1,6 @@
 # AI Auto Clipper
 
-Local-first YouTube/long-form clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX.
+Local-first clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX. OpusClip but free!
 
 ## Highlights
 - One-command startup (`run.bat` or `run.ps1`)
