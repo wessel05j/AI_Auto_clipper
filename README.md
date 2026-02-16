@@ -1,288 +1,187 @@
-# AI Auto Clipper
+﻿# AI AUTO CLIPPER
 
-Local-first clipping pipeline with Whisper transcription, Ollama reasoning models, and a production terminal UX. OpusClip but free!
+<p align="center">
+  <img src="assets/ai-auto-clipper-logo.svg" alt="AI AUTO CLIPPER logo" width="920" />
+</p>
 
-## Highlights
-- One-command startup (`run.bat` or `run.ps1`)
-- First-run setup wizard with hardware detection and model auto-pull
-- Rich terminal dashboard with status and settings
-- YouTube queue manager (fetch, add, replace, remove, clear)
-- Live Activity Panel with AI clipping and extraction counters
-- Robust yt-dlp format fallback (`2K -> 1080p -> progressive`)
-- AI clipping pipeline (scan -> merge -> filter -> extract)
-- Strict AI JSON parsing with retries and schema validation
-- Thinking-model policy (`>=8b`) enforced in setup + settings
-- Temp archive cleanup policy (never / max size / max age)
-- Clean modular architecture for public/demo use
+🎬 **AI AUTO CLIPPER** is a local-first clipping project, basically **OpusClip vibes, but free**.  
+🤖 Extract long and short clips from your videos, tune advanced settings, and get exactly the output style you want.  
+🔒 Everything runs on your machine with Whisper + Ollama + yt-dlp.
 
-## Quick Start (Windows)
-1. Install prerequisites:
+## Why This Project
+- 🧠 AI clip discovery with strict JSON output handling and retry logic
+- 🎯 Long-form and short-form clip extraction in one pipeline
+- 🛠️ Setup Wizard + Dashboard for real-world usage, not just scripts
+- 📥 YouTube queue + channel fetch system built-in
+- ⚙️ Hardware-aware runtime tuning and model policy enforcement (`thinking` models, `>=8b`)
+
+## Requirements
+- `Python` (3.10+ recommended)
+- `Git`
+- `ffmpeg` (must be available in `PATH`)
+- `Ollama` (running locally, default `http://localhost:11434`)
+
+## Windows Quick Start
+
+### 1. Check dependencies
+```powershell
+python --version
+git --version
+ffmpeg -version
+ollama --version
+```
+
+If something is missing, install quickly with:
 ```powershell
 winget install --id Python.Python.3.11 -e
+winget install --id Git.Git -e
 winget install --id Gyan.FFmpeg -e
 winget install --id Ollama.Ollama -e
 ```
-2. Clone the repo:
+
+### 2. Clone and run
 ```powershell
 git clone https://github.com/wessel05j/AI_Auto_clipper.git
 cd AI_Auto_clipper
-```
-3. Run:
-```powershell
-ollama pull gpt-oss:20b
+.\run.bat
 ```
 
-No manual model pull is required. The setup wizard handles model recommendation and pull automatically.
-
-## Quick Start (PowerShell)
+Alternative launcher:
 ```powershell
+.\run.ps1
+```
+
+`run.bat` / `run.ps1` automatically create `venv`, install deps (`setup_env.py`), and start the app.
+
+## macOS / Linux Quick Start
+
+### 1. Check dependencies
+```bash
+python3 --version
+git --version
+ffmpeg -version
+ollama --version
+```
+
+### 2. Clone and run
+```bash
 git clone https://github.com/wessel05j/AI_Auto_clipper.git
 cd AI_Auto_clipper
-```
-
-### 4) Pull an Ollama model
-```bash
-ollama pull llama3.2
-```
-
-### 5) Create env + install deps (CUDA/CPU auto)
-```bash
 python3 -m venv venv
 source venv/bin/activate
 python setup_env.py --torch auto
-```
-
-### 6) Configure + run
-```bash
-python settings.py
 python main.py
 ```
-# 🎬 AI Auto Clipper
 
-**Like OpusClip, but free!** 🚀 An automatic AI-powered video clip extractor that discovers videos, transcribes them with Whisper, uses local LLMs via Ollama to find interesting segments based on your query, and exports matching clips as MP4 files. No code editing needed – just run and configure interactively!
+Notes:
+- The bundled launcher scripts are Windows-oriented (`.bat` / `.ps1`).
+- On macOS/Linux, run via the commands above.
 
-## ✨ How It Works
-1. 🔍 Discover videos from local folders or download from YouTube
-2. 🎙️ Transcribe with Whisper (local, fast, private)
-3. ✂️ Chunk transcripts smartly using token estimation
-4. 🤖 Send chunks to your local LLM (Ollama) to find relevant segments
-5. 🔗 Merge nearby clips to avoid fragmentation
-6. 🎞️ Render and export clips using MoviePy
+## First Run Experience
+1. 🚀 Runtime layout is prepared (`input/`, `output/`, `temp/`, `config/`, `logs/`, `system/`).
+2. 🔍 Config is validated (`config/config.json`).
+3. 🧙 If config is missing/invalid, Setup Wizard launches automatically.
+4. 📊 Dashboard opens after setup and lets you launch clipping, edit settings, manage queues, and view logs.
 
----
+## How Clipping Works
+1. 📥 Optional YouTube download from queued links and/or channel fetch.
+2. 📝 Whisper transcription turns video audio into timestamped transcript segments.
+3. 🧩 Transcript chunking keeps prompt size within token budget.
+4. 🤖 AI clipping scans chunks (plus optional bridge chunks) using Ollama.
+5. 🔗 Segment merge combines nearby candidates using `merge_distance_seconds`.
+6. ✅ Duration filtering enforces constraints (including "at least X seconds" from your query).
+7. ✂️ Clip extraction writes final `.mp4` clips to output.
+8. 📦 Source video is archived to `temp/` and cleanup policy is applied.
 
-## 📥 Installation & Setup
+## Architecture (Professional Overview)
 
-### Windows 🪟
-1. **Install Python 3.10–3.11**: Download from [python.org](https://www.python.org/downloads/)
-2. **Install FFmpeg**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
-3. **Install Ollama**: Get it from [ollama.com](https://ollama.com/download) and pull a model: `ollama pull gpt-oss:20b` Suggested using a thinking model
-4. **Clone/Download this repo**
+### Entry + Bootstrap
+- `run.bat` / `run.ps1`: top-level launch entrypoints.
+- `launcher/run.bat` / `launcher/run.ps1`: create/activate venv, call `setup_env.py`, then `main.py`.
+- `setup_env.py`: installs Python deps, resolves Torch mode (CPU/CUDA), stores setup cache in `system/setup_state.json`, warns about missing external tools.
 
-### macOS 🍎 / Linux 🐧
-1. **Install Python 3.10–3.11**: Use Homebrew (`brew install python`) or your package manager
-2. **Install FFmpeg**: `brew install ffmpeg` (macOS) or `sudo apt install ffmpeg` (Ubuntu)
-3. **Install Ollama**: Follow [ollama.com](https://ollama.com/download) and run `ollama pull llama3.2`
-4. **Clone/Download this repo**
+### Application Core
+- `main.py`: startup orchestration.
+  - Ensures folders exist.
+  - Config validation + migration fallback.
+  - Starts Setup Wizard or Dashboard.
+- `core/engine.py`: runtime orchestrator.
+  - Download -> transcribe -> chunk -> AI scan -> merge -> filter -> extract -> archive.
+  - Writes live progress to `system/status.json`.
+  - Handles temporary cleanup and resource offload (Whisper + CUDA + Ollama).
+- `core/ai_pipeline.py`: Ollama chat layer.
+  - Chunk scanner with retries and strict parsing.
+  - JSON cleaning/repair fallback for resilient outputs.
+- `core/clipping.py`: transcript merge and final video cutting with MoviePy.
+- `core/yt_handler.py`: YouTube ingestion.
+  - URL normalization, channel RSS fetch, history tracking.
+  - Multi-strategy yt-dlp download with format probing.
+- `core/format_checker.py`: format fallback policy (`2K -> 1080p -> progressive -> generic`).
 
-### Python Packages 📦
-Install via `pip install -r requirements.txt`:
-- `openai-whisper` – Local Whisper transcription
-- `ollama` – Ollama client for local LLMs
-- `moviepy==1.0.3` – Video editing (pinned for compatibility)
-- `yt_dlp` – YouTube downloading
-- `torch` – PyTorch (CUDA-enabled if available)
-- `requests` – HTTP handling
-- `tiktoken` – Token counting
-- `tqdm` – Progress bars
-- `numpy<2` – Numerical ops (pinned)
+### User Interface Layer
+- `ui/setup_wizard.py`: guided first-run setup.
+  - Hardware detect, model recommendation, token plan, config generation.
+- `ui/dashboard.py`: operational control center.
+  - Settings editor, queue manager, channel manager, logs viewer, info panel.
+- `ui/components.py`: shared terminal components (logo panel, clear, editor integration).
 
----
+### Utilities + Contracts
+- `utils/validators.py`: schema defaults, validation, config migration, profile I/O.
+- `utils/model_selector.py`: model policy, Ollama availability, token planning helpers.
+- `utils/hardware_detect.py`: CPU/RAM/GPU probing and runtime budget estimates.
+- `utils/logging_setup.py`: rotating file logs + console log policy.
 
-## 🚀 How to Use
+## Key Runtime Files
+- `config/config.json`: primary app config (all runtime behavior).
+- `config/hardware_profile.json`: detected hardware snapshot.
+- `config/model_profile.json`: selected model + token planning details.
+- `system/setup_state.json`: environment/bootstrap cache.
+- `system/status.json`: current engine progress.
+- `system/downloaded_youtube_links.txt`: downloaded history.
+- `system/fetched_youtube_links.txt`: fetched history.
+- `logs/app.log`: rotating runtime logs.
 
-### First Time Setup
-1. Run `python settings.py` (or `settings.bat` on Windows)
-2. Follow the interactive wizard:
-   - Choose your Ollama model (e.g., `gpt-oss:20b`)
-   - Pick Whisper model (`tiny` for speed, `large` for accuracy)
-   - Enter your clip query (e.g., "Find funny moments")
-   - Set max tokens, merge distance, etc.
-3. Settings save to `system/settings.json`
-
-### Running the Clipper
-- Run `python main.py` (or `main.bat`)
-- It processes videos in `input/`, outputs clips to `output/`
-- Check `system/log.txt` for logs and progress (good for troubleshooting)
-
-### Adjusting Settings for Better Results 🎛️
-Run `python settings.py` anytime to tweak:
-- **AI Model**: Use train-of-thought models for better detection (gpt-oss:20b)
-- **Whisper Model**: `tiny/base` for speed, `medium/large` for accuracy
-- **Max Tokens**: Higher = longer chunks processed at once (better context)
-- **Merge Distance**: Seconds to merge nearby clips (e.g., 30+ for longer clips)
-- **AI Loops**: How many times to re-scan chunks (1-3 recommended)
-- **Temperature**: 0.1-0.9 for creativity vs. precision
-- **Channels/Hours Limit**: For YouTube monitoring
-
----
-
-## 📺 YouTube Downloads & Cookies 🍪
-
-To download unlimited YouTube videos without restrictions:
-
-1. **Install browser extension**: Get "Get cookies.txt" for [Chrome](https://chrome.google.com/webstore/detail/get-cookiestxt/bgaddhkoddajcdgocldbbfleckgcbcid) or [Firefox](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/)
-2. **Log into YouTube** in your browser
-3. **Export cookies**: Click the extension icon, save as `cookies.txt` in the project root
-4. **The downloader auto-uses it** – no extra config needed!
-
-If downloads fail, ensure cookies are fresh and from the same browser.
-
----
-
-## ⚡ Running with CUDA (GPU Acceleration)
-
-For blazing-fast transcription on NVIDIA GPUs:
-
-### Check CUDA Support
-After installing deps: `python -c "import torch; print(torch.cuda.is_available())"`
-- `True` = GPU mode active! 🚀
-- `False` = CPU mode (still works, just slower)
-
-### Manual CUDA Setup
-If not detected:
-1. **Install CUDA Toolkit 11.8**: From [NVIDIA](https://developer.nvidia.com/cuda-11-8-0-download-archive)
-2. **Update NVIDIA drivers**: [Download](https://www.nvidia.com/Download/index.aspx)
-3. **Reinstall PyTorch**: 
-   ```bash
-   pip uninstall torch -y
-   pip install torch==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118
-
-4. **Restart & verify**
-
-**Note**: Whisper needs 2-8GB VRAM depending on model size. CPU fallback works but is 5-10x slower.
-
----
-
-## 🗂️ Project Layout
-```
-
-Input videos go in `input/` and generated clips appear in `output/`.
-
-## ⚡ CUDA / GPU Notes
-- `setup_env.py --torch auto` tries CUDA wheels first when NVIDIA tooling is detected.
-- If CUDA is unavailable, it falls back to CPU torch automatically.
-- Check status:
-
-```bash
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
-```
-
-Optional modes:
-```bash
-python setup_env.py --torch cuda
-python setup_env.py --torch cpu
-python setup_env.py --torch skip
-python setup_env.py --torch auto --force
-```
-
-## 🧩 Daily Commands
-- Windows configure: `.\settings.bat`
-- Windows run: `.\main.bat`
-- Windows fetch channel links: `.\fetch_yt_links.bat`
-- macOS/Linux configure: `python settings.py`
-- macOS/Linux run: `python main.py`
-- macOS/Linux fetch channel links: `python fetch_yt_links.py`
-
-## 🛠️ Configuration
-All settings are saved in `system/settings.json`.
-
-Important keys:
-- `ai_model`
-- `transcribing_model`
-- `user_query`
-- `system_query` (default system prompt is already included automatically)
-- `total_tokens`
-- `max_chunking_tokens`
-- `max_ai_tokens`
-- `merge_distance`
-- `ai_loops`
-- `temperature`
-- `rerun_temp_files`
-
-## 📺 YouTube Intake
-
-### Add direct links
-Use `settings.py` option `6` to add to `youtube_list`.
-
-### Monitor channels
-1. Add channel `/videos` URLs in option `11`
-2. Set hour window in option `12`
-3. Run `fetch_yt_links.py` (or `fetch_yt_links.bat`)
-
-### Cookies (if YouTube blocks downloads)
-Put `cookies.txt` in one of:
-- `resources/cookies.txt`
-- `system/cookies.txt`
-- project root `cookies.txt`
-
-## 🧭 Workflow
-1. Scan files in `input/`
-2. Transcribe with Whisper
-3. Chunk transcript to token budget
-4. Ask Ollama for `[start, end, score]` clip candidates
-5. Merge nearby segments
-6. Export clips to `output/`
-7. Move processed source video to `temp/`
-
-## 🆘 Troubleshooting
-- `Settings file not found`: run `settings.py` once first
-- `ffmpeg` errors: install FFmpeg and verify `ffmpeg -version`
-- No clips found: tighten `user_query`, increase `ai_loops`, lower `temperature`
-- Ollama errors: verify `ollama serve` and `ollama_url` in settings
-- Slow runtime: use `tiny`/`base` Whisper model or ensure CUDA is active
-- Download issues: refresh `cookies.txt` and retry
-
-## 📁 Project Layout
+## Folder Map
 ```text
 AI_Auto_clipper/
+|-- assets/
+|   `-- ai-auto-clipper-logo.svg
 |-- launcher/
 |   |-- run.bat
 |   `-- run.ps1
 |-- core/
 |   |-- engine.py
-|   |-- clipping.py
 |   |-- ai_pipeline.py
+|   |-- clipping.py
 |   |-- yt_handler.py
 |   `-- format_checker.py
 |-- ui/
 |   |-- setup_wizard.py
 |   |-- dashboard.py
 |   `-- components.py
-|-- config/
-|   |-- config.json
-|   |-- hardware_profile.json
-|   |-- model_profile.json
-|   `-- .gitkeep
-|-- logs/
-|   `-- .gitkeep
 |-- utils/
-|   |-- hardware_detect.py
+|   |-- validators.py
 |   |-- model_selector.py
-|   `-- validators.py
-`-- main.py
+|   |-- hardware_detect.py
+|   `-- logging_setup.py
+|-- config/
+|-- input/
+|-- output/
+|-- temp/
+|-- system/
+|-- logs/
+|-- setup_env.py
+|-- main.py
+|-- run.bat
+`-- run.ps1
 ```
 
 ## Notes
-- Input videos: `input/`
-- Exported clips: `output/`
-- Processed source archive: `temp/`
-- Merged candidates are filtered by duration constraints before final extraction
-- Runtime logs: `logs/app.log`
-
-## Compatibility
-- Windows-first launcher UX
-- Local GPU or CPU inference supported
+- Input videos go in `input/`.
+- Exported clips go to `output/` (or your custom output path from setup/settings).
+- Processed source videos are moved to `temp/`.
+- Model policy enforces thinking-capable models with at least 8b parameters.
+- AI output parsing is strict by design to keep extraction stable.
 
 ## License
 Apache License 2.0 (`LICENSE`)
