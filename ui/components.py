@@ -84,6 +84,99 @@ def success_panel(message: str) -> Panel:
     )
 
 
+def _command_is_available(executable: str) -> bool:
+    command_path = Path(executable)
+    if command_path.is_file():
+        return True
+    return shutil.which(executable) is not None
+
+
+def _normalized_command_name(executable: str) -> str:
+    name = Path(executable).name.lower()
+    for suffix in (".exe", ".cmd", ".bat", ".com"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _coalesce_windows_executable(parts: list[str]) -> list[str]:
+    if os.name != "nt" or len(parts) < 2 or _command_is_available(parts[0]):
+        return parts
+    executable_suffixes = (".exe", ".cmd", ".bat", ".com")
+    for index in range(2, len(parts) + 1):
+        candidate = " ".join(parts[:index])
+        if _command_is_available(candidate):
+            return [candidate, *parts[index:]]
+        if parts[index - 1].lower().endswith(executable_suffixes):
+            return [candidate, *parts[index:]]
+    return parts
+
+
+def _split_editor_command(raw_command: str) -> list[str]:
+    if not raw_command:
+        return []
+    try:
+        parts = shlex.split(raw_command, posix=os.name != "nt")
+    except ValueError:
+        parts = raw_command.split()
+    cleaned = [part.strip() for part in parts if part.strip()]
+    return _coalesce_windows_executable(cleaned)
+
+
+def _ensure_editor_wait_flag(parts: list[str]) -> list[str]:
+    if not parts:
+        return parts
+    command_name = _normalized_command_name(parts[0])
+    lowered_args = {arg.lower() for arg in parts[1:]}
+    if command_name in {"code", "code-insiders", "codium"} and "--wait" not in lowered_args:
+        return [parts[0], "--wait", *parts[1:]]
+    if command_name in {"subl", "sublime_text"} and "-w" not in lowered_args and "--wait" not in lowered_args:
+        return [parts[0], "-w", *parts[1:]]
+    return parts
+
+
+def _editor_commands(temp_file: Path) -> list[list[str]]:
+    target = str(temp_file)
+    commands: list[list[str]] = []
+    visual = os.environ.get("VISUAL", "").strip()
+    editor = os.environ.get("EDITOR", "").strip()
+    for candidate in (visual, editor):
+        parts = _split_editor_command(candidate)
+        if not parts:
+            continue
+        parts = _ensure_editor_wait_flag(parts)
+        if not _command_is_available(parts[0]):
+            continue
+        commands.append([*parts, target])
+
+    if os.name == "nt":
+        commands.append(["notepad", target])
+        if shutil.which("code"):
+            commands.append(["code", "--wait", target])
+    elif sys.platform == "darwin":
+        if shutil.which("nano"):
+            commands.append(["nano", target])
+        elif shutil.which("vi"):
+            commands.append(["vi", target])
+        else:
+            commands.append(["open", "-W", "-t", target])
+    else:
+        if shutil.which("nano"):
+            commands.append(["nano", target])
+        else:
+            commands.append(["vi", target])
+
+    unique_commands: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for command in commands:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_commands.append(command)
+    return unique_commands
+
+
 def edit_text_in_editor(initial_text: str, filename_hint: str = "system_prompt.txt") -> str:
     """
     Open text in external editor for full navigation/editing.
@@ -105,39 +198,18 @@ def edit_text_in_editor(initial_text: str, filename_hint: str = "system_prompt.t
     finally:
         handle.close()
 
-    command: list[str] = []
-    visual = os.environ.get("VISUAL", "").strip()
-    editor = os.environ.get("EDITOR", "").strip()
-    for candidate in (visual, editor):
-        if not candidate:
+    editor_ran = False
+    for command in _editor_commands(temp_file):
+        try:
+            result = subprocess.run(command, check=False)
+            if result.returncode not in (0, None):
+                continue
+            editor_ran = True
+            break
+        except Exception:
             continue
-        parts = shlex.split(candidate)
-        if not parts:
-            continue
-        command = [*parts, str(temp_file)]
-        break
 
-    if not command:
-        if shutil.which("code"):
-            command = ["code", "--wait", str(temp_file)]
-        elif os.name == "nt":
-            command = ["notepad", str(temp_file)]
-        elif sys.platform == "darwin":
-            if shutil.which("nano"):
-                command = ["nano", str(temp_file)]
-            elif shutil.which("vi"):
-                command = ["vi", str(temp_file)]
-            else:
-                command = ["open", "-W", "-t", str(temp_file)]
-        else:
-            if shutil.which("nano"):
-                command = ["nano", str(temp_file)]
-            else:
-                command = ["vi", str(temp_file)]
-
-    try:
-        subprocess.run(command, check=False)
-    except Exception:
+    if not editor_ran:
         try:
             temp_file.unlink(missing_ok=True)
         except Exception:
