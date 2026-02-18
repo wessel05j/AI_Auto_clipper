@@ -591,6 +591,36 @@ class Dashboard:
         )
         return True
 
+    def _configure_temp_run_save(self) -> bool:
+        runtime_cfg = self.config.setdefault("runtime", {})
+        clipping_cfg = self.config.setdefault("clipping", {})
+        hard_clear(self.console)
+        show_header(self.console)
+        enabled = bool(runtime_cfg.get("enable_temp_run_save", clipping_cfg.get("rerun_temp_files", True)))
+
+        self.console.print(
+            Panel(
+                (
+                    f"[bold cyan]Current:[/bold cyan] {'Enabled' if enabled else 'Disabled'}\n\n"
+                    "[bold cyan]1.[/bold cyan] Enable\n"
+                    "[bold cyan]2.[/bold cyan] Disable\n"
+                    "[bold cyan]3.[/bold cyan] Back"
+                ),
+                title="Temp Run Save",
+                border_style="cyan",
+            )
+        )
+
+        choice = Prompt.ask("Select an option", choices=["1", "2", "3"], default="3")
+        if choice == "3":
+            return False
+
+        runtime_cfg["enable_temp_run_save"] = choice == "1"
+        clipping_cfg["rerun_temp_files"] = runtime_cfg["enable_temp_run_save"]
+        state = "enabled" if runtime_cfg["enable_temp_run_save"] else "disabled"
+        self.console.print(f"[green]Temp run save {state}.[/green]")
+        return True
+
     def _change_settings(self) -> None:
         while True:
             hard_clear(self.console)
@@ -756,12 +786,9 @@ class Dashboard:
                 if not changed:
                     continue
             elif choice == "13":
-                runtime_cfg = self.config.setdefault("runtime", {})
-                current = bool(runtime_cfg.get("enable_temp_run_save", True))
-                runtime_cfg["enable_temp_run_save"] = not current
-                self.config.setdefault("clipping", {})["rerun_temp_files"] = runtime_cfg["enable_temp_run_save"]
-                state = "enabled" if runtime_cfg["enable_temp_run_save"] else "disabled"
-                self.console.print(f"[green]Temp run save {state}.[/green]")
+                changed = self._configure_temp_run_save()
+                if not changed:
+                    continue
             else:
                 self.console.print("[yellow]Invalid option.[/yellow]")
                 continue
