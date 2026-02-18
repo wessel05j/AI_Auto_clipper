@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -22,6 +24,14 @@ class _SilentYDLLogger:
 
     def error(self, _: str) -> None:
         return None
+
+
+@dataclass
+class DownloadResult:
+    status: str
+    path: Optional[str] = None
+    strategy: Optional[str] = None
+    error: Optional[str] = None
 
 
 class YTHandler:
@@ -49,11 +59,57 @@ class YTHandler:
         self._browser_cookies: Optional[Tuple[str, ...]] = None
         self._download_history_cache: Optional[set[str]] = None
         self._fetched_history_cache: Optional[set[str]] = None
+        self._js_runtimes = self._detect_js_runtimes()
 
         self.download_history_file.parent.mkdir(parents=True, exist_ok=True)
         self.fetched_history_file.parent.mkdir(parents=True, exist_ok=True)
         self.download_history_file.touch(exist_ok=True)
         self.fetched_history_file.touch(exist_ok=True)
+
+    @staticmethod
+    def _summarize_exception(exc: Exception, max_len: int = 260) -> str:
+        text = " ".join(str(exc).split())
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len].rstrip()}..."
+
+    @staticmethod
+    def _detect_js_runtimes() -> Dict[str, Dict[str, Any]]:
+        runtimes: Dict[str, Dict[str, Any]] = {}
+        if shutil.which("node"):
+            runtimes["node"] = {}
+        if shutil.which("deno"):
+            runtimes["deno"] = {}
+        return runtimes
+
+    def diagnostics(self) -> Dict[str, Any]:
+        self._detect_cookies()
+        return {
+            "cookie_file": str(self._cookies_file) if self._cookies_file else None,
+            "browser_cookie_source": self._browser_cookies[0] if self._browser_cookies else None,
+            "js_runtimes": sorted(self._js_runtimes.keys()),
+        }
+
+    def probe_video_access(self, url: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ") -> Tuple[bool, str]:
+        probe_opts: Dict[str, Any] = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": False,
+            "ignoreerrors": False,
+            "no_warnings": True,
+            "ignoreconfig": True,
+            "logger": _SilentYDLLogger(),
+        }
+        self._apply_cookies_to_opts(probe_opts)
+        if self._js_runtimes:
+            probe_opts["js_runtimes"] = dict(self._js_runtimes)
+            probe_opts["remote_components"] = ["ejs:github"]
+        try:
+            with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                ydl.extract_info(url, download=False)
+            return True, "Probe succeeded."
+        except Exception as exc:
+            return False, self._summarize_exception(exc)
 
     @property
     def download_history_file(self) -> Path:
@@ -419,11 +475,11 @@ class YTHandler:
         url: str,
         output_dir: Path,
         filename_template: str = "%(title).200B.%(ext)s",
-    ) -> Optional[str]:
+    ) -> DownloadResult:
         normalized = self.normalize_video_url(url)
         if self.is_in_history(normalized):
             self.logger.info("Skipping already downloaded URL: %s", normalized)
-            return None
+            return DownloadResult(status="already_downloaded")
 
         target_url = normalized or url
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -434,8 +490,7 @@ class YTHandler:
             "outtmpl": str(output_dir / filename_template),
             "quiet": True,
             "noprogress": True,
-            "js_runtimes": {"node": {}, "deno": {}},
-            "remote_components": ["ejs:github"],
+            "no_warnings": True,
             "http_headers": {
                 "User-Agent": self.USER_AGENT,
                 "Accept-Language": "en-us,en;q=0.5",
@@ -449,23 +504,27 @@ class YTHandler:
             "ignoreconfig": True,
             "noplaylist": True,
             "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
+            "logger": _SilentYDLLogger(),
         }
+        if self._js_runtimes:
+            base_opts["js_runtimes"] = dict(self._js_runtimes)
+            base_opts["remote_components"] = ["ejs:github"]
 
         strategies: List[Dict[str, Any]] = [
             {
-                "name": "cookies-default-clients",
+                "name": "cookies-mobile-tv",
                 "use_cookies": True,
-                "extractor_args": {"youtube": {"player_client": ["tv_downgraded", "web", "web_safari"]}},
+                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded", "web"]}},
             },
             {
-                "name": "cookies-mobile-clients",
+                "name": "cookies-web-default",
                 "use_cookies": True,
-                "extractor_args": {"youtube": {"player_client": ["ios_downgraded", "android_vr", "web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web", "web_safari", "tv_downgraded"]}},
             },
             {
-                "name": "no-cookies-mobile",
+                "name": "no-cookies-mobile-tv",
                 "use_cookies": False,
-                "extractor_args": {"youtube": {"player_client": ["ios_downgraded", "android_vr"]}},
+                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded"]}},
             },
             {
                 "name": "no-cookies-generic",
@@ -473,6 +532,7 @@ class YTHandler:
             },
         ]
 
+        last_error = "All download strategies failed."
         for strategy in strategies:
             ydl_opts = dict(base_opts)
             if strategy.get("extractor_args"):
@@ -488,12 +548,14 @@ class YTHandler:
                 selected_format, format_strategy = self._probe_and_decide_format(target_url, ydl_opts)
                 ydl_opts["format"] = selected_format
             except Exception as exc:
+                error_summary = self._summarize_exception(exc)
                 self.logger.warning(
                     "Format probe failed for strategy '%s' on %s: %s",
                     strategy["name"],
                     target_url,
-                    exc,
+                    error_summary,
                 )
+                last_error = f"{strategy['name']}: {error_summary}"
                 ydl_opts["format"] = "bestvideo+bestaudio/best"
                 format_strategy = "generic-fallback"
 
@@ -507,12 +569,14 @@ class YTHandler:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     code = ydl.download([target_url])
             except Exception as exc:
+                error_summary = self._summarize_exception(exc)
                 self.logger.warning(
                     "Download strategy '%s' failed for %s: %s",
                     strategy["name"],
                     target_url,
-                    exc,
+                    error_summary,
                 )
+                last_error = f"{strategy['name']}: {error_summary}"
                 continue
 
             if code not in (None, 0):
@@ -522,11 +586,13 @@ class YTHandler:
                     target_url,
                     strategy["name"],
                 )
+                last_error = f"{strategy['name']}: non-zero yt-dlp status {code}"
                 continue
 
             created_files = self._new_video_files(before_files, list(output_dir.glob("*")))
             if not created_files:
                 self.logger.warning("No file created for %s with strategy '%s'", target_url, strategy["name"])
+                last_error = f"{strategy['name']}: no output file created"
                 continue
 
             created_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
@@ -535,10 +601,15 @@ class YTHandler:
             if size < 10_000:
                 self.logger.warning("Downloaded file too small (%s bytes): %s", size, downloaded.name)
                 downloaded.unlink(missing_ok=True)
+                last_error = f"{strategy['name']}: downloaded file too small ({size} bytes)"
                 continue
 
             self._add_to_download_history(target_url)
             self.logger.info("Download succeeded for %s (%s)", target_url, downloaded.name)
-            return str(downloaded)
+            return DownloadResult(
+                status="downloaded",
+                path=str(downloaded),
+                strategy=strategy["name"],
+            )
 
-        return None
+        return DownloadResult(status="failed", error=last_error)

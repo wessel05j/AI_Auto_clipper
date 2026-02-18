@@ -19,10 +19,12 @@ from ui.components import edit_text_in_editor, hard_clear, show_header, warning_
 from ui.setup_wizard import SetupWizard
 from utils.model_selector import (
     POLICY_MODEL,
+    build_runtime_token_plan,
     ensure_ollama_running,
     fetch_local_models,
     is_required_thinking_model,
     model_exists_locally,
+    prompt_aware_chunk_cap,
     pull_model,
     supports_think_low,
 )
@@ -45,6 +47,48 @@ class Dashboard:
 
     def _save_config(self) -> None:
         save_json_file(self._paths["config_file"], self.config)
+
+    def _recalculate_runtime_tokens(self, announce: bool = False) -> None:
+        runtime_cfg = self.config.setdefault("runtime", {})
+        clipping_cfg = self.config.setdefault("clipping", {})
+        ollama_cfg = self.config.setdefault("ollama", {})
+
+        hardware = load_optional_profile(self._paths["hardware_file"])
+        intensity = str(runtime_cfg.get("setup_intensity", "balanced")).lower().strip() or "balanced"
+        context_window = int(ollama_cfg.get("context_window", runtime_cfg.get("total_context_tokens", 8192)))
+        max_output_tokens = int(ollama_cfg.get("max_output_tokens", 900))
+
+        token_plan = build_runtime_token_plan(
+            model_name=str(ollama_cfg.get("model", "")),
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
+            hardware_profile=hardware,
+            intensity=intensity,
+        )
+        runtime_cfg["total_context_tokens"] = int(token_plan["total_context_tokens"])
+        runtime_cfg["max_chunk_tokens"] = int(token_plan["max_chunk_tokens"])
+
+        prompt_plan = prompt_aware_chunk_cap(
+            configured_chunk_tokens=int(runtime_cfg["max_chunk_tokens"]),
+            total_context_tokens=int(runtime_cfg["total_context_tokens"]),
+            max_output_tokens=int(max_output_tokens),
+            user_query=str(clipping_cfg.get("user_query", "")),
+            system_prompt=str(clipping_cfg.get("system_prompt", "")),
+        )
+        runtime_cfg["max_chunk_tokens"] = int(prompt_plan["effective_chunk_tokens"])
+
+        # Backward-compat sync for old key still present in existing configs.
+        clipping_cfg["rerun_temp_files"] = bool(runtime_cfg.get("enable_temp_run_save", True))
+
+        if announce:
+            self.console.print(
+                (
+                    "[green]Token settings updated:[/green] "
+                    f"context={runtime_cfg['total_context_tokens']}, "
+                    f"max_chunk={runtime_cfg['max_chunk_tokens']} "
+                    f"(prompt_tokens~{prompt_plan['prompt_tokens']})."
+                )
+            )
 
     @classmethod
     def _parse_video_link_input(cls, raw_value: str) -> List[str]:
@@ -140,10 +184,18 @@ class Dashboard:
         queue_table.add_column("Key", style="cyan", no_wrap=True)
         queue_table.add_column("Value", style="white")
         queue_table.add_row("Queued Links", str(len(self.config["clipping"].get("youtube_links", []))))
+        queue_table.add_row(
+            "YouTube Downloading",
+            "Enabled" if bool(self.config["clipping"].get("enable_youtube_downloads", True)) else "Disabled",
+        )
         queue_table.add_row("Input Videos Waiting", str(waiting_videos))
         queue_table.add_row("Output Clips", str(output_clips))
         queue_table.add_row("Output Dir", str(self.config["paths"]["output_dir"]))
         queue_table.add_row("Ollama URL", str(self.config["ollama"]["url"]))
+        queue_table.add_row(
+            "Temp Run Save",
+            "Enabled" if bool(self.config["runtime"].get("enable_temp_run_save", True)) else "Disabled",
+        )
         cleanup = self.config.get("maintenance", {}).get("temp_cleanup", {})
         cleanup_mode = str(cleanup.get("mode", "never"))
         queue_table.add_row("Temp Cleanup", cleanup_mode)
@@ -188,7 +240,7 @@ class Dashboard:
                 (
                     "[bold cyan]1.[/bold cyan] Launch Clipping Engine\n"
                     "[bold cyan]2.[/bold cyan] Change Settings\n"
-                    "[bold cyan]3.[/bold cyan] Manage YouTube Queue\n"
+                    "[bold cyan]3.[/bold cyan] YouTube Settings\n"
                     "[bold cyan]4.[/bold cyan] Re-run Setup Wizard\n"
                     "[bold cyan]5.[/bold cyan] Edit System Prompt\n"
                     "[bold cyan]6.[/bold cyan] Exit\n"
@@ -232,12 +284,32 @@ class Dashboard:
         added = len(current) - before_count
         self.console.print(f"[green]Fetched {len(links)} links, added {added} new links to queue.[/green]")
 
-    def _manage_youtube_queue(self) -> None:
+    def _youtube_settings(self) -> None:
         while True:
             hard_clear(self.console)
             show_header(self.console)
 
             youtube_links = list(self.config["clipping"].get("youtube_links", []))
+            channels = list(self.config["clipping"].get("channels", []))
+            hours_limit = int(self.config["clipping"].get("channels_hours_limit", 24))
+            enabled = bool(self.config["clipping"].get("enable_youtube_downloads", True))
+            diagnostics = self.yt_handler.diagnostics()
+
+            status_table = Table(title="YouTube Settings", show_lines=True)
+            status_table.add_column("Setting", style="cyan", no_wrap=True)
+            status_table.add_column("Value", style="white")
+            status_table.add_row("Downloading", "Enabled" if enabled else "Disabled")
+            status_table.add_row("Channels", str(len(channels)))
+            status_table.add_row("Fetch Hours", str(hours_limit))
+            status_table.add_row("Queued Links", str(len(youtube_links)))
+            status_table.add_row(
+                "Cookie Source",
+                str(diagnostics.get("cookie_file") or diagnostics.get("browser_cookie_source") or "None"),
+            )
+            js_runtimes = diagnostics.get("js_runtimes") or []
+            status_table.add_row("JS Runtime", ", ".join(js_runtimes) if js_runtimes else "None")
+            self.console.print(status_table)
+
             table = Table(title="YouTube Queue", show_lines=True)
             table.add_column("#", style="cyan", no_wrap=True)
             table.add_column("Video URL", style="white")
@@ -253,15 +325,19 @@ class Dashboard:
             self.console.print(
                 Panel(
                     (
-                        "[bold cyan]1.[/bold cyan] Fetch recent links from channels\n"
-                        "[bold cyan]2.[/bold cyan] Add links manually\n"
-                        "[bold cyan]3.[/bold cyan] Remove queued link by index\n"
-                        "[bold cyan]4.[/bold cyan] Replace entire queue\n"
-                        "[bold cyan]5.[/bold cyan] Remove already-downloaded links\n"
-                        "[bold cyan]6.[/bold cyan] Clear queue\n"
+                        "[bold cyan]1.[/bold cyan] Toggle YouTube downloading\n"
+                        "[bold cyan]2.[/bold cyan] Manage channels\n"
+                        "[bold cyan]3.[/bold cyan] Set channel fetch hours\n"
+                        "[bold cyan]4.[/bold cyan] Fetch recent links from channels\n"
+                        "[bold cyan]5.[/bold cyan] Add links manually\n"
+                        "[bold cyan]6.[/bold cyan] Remove queued link by index\n"
+                        "[bold cyan]7.[/bold cyan] Replace entire queue\n"
+                        "[bold cyan]8.[/bold cyan] Remove already-downloaded links\n"
+                        "[bold cyan]9.[/bold cyan] Clear queue\n"
+                        "[bold cyan]10.[/bold cyan] Run YouTube diagnostics probe\n"
                         "[bold cyan]0.[/bold cyan] Back"
                     ),
-                    title="Queue Actions",
+                    title="YouTube Actions",
                     border_style="cyan",
                 )
             )
@@ -271,11 +347,37 @@ class Dashboard:
                 return
 
             if action == "1":
-                self._fetch_youtube_links()
+                self.config["clipping"]["enable_youtube_downloads"] = not enabled
+                self._save_config()
+                state = "enabled" if self.config["clipping"]["enable_youtube_downloads"] else "disabled"
+                self.console.print(f"[green]YouTube downloading {state}.[/green]")
                 input("Press Enter to continue...")
                 continue
 
             if action == "2":
+                self._manage_channels()
+                continue
+
+            if action == "3":
+                self.config["clipping"]["channels_hours_limit"] = IntPrompt.ask(
+                    "Fetch uploads from last X hours",
+                    default=hours_limit,
+                )
+                errors = validate_config(self.config)
+                if errors:
+                    self.console.print(f"[red]Update rejected: {errors[0]}[/red]")
+                else:
+                    self._save_config()
+                    self.console.print("[green]Fetch hours updated.[/green]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "4":
+                self._fetch_youtube_links()
+                input("Press Enter to continue...")
+                continue
+
+            if action == "5":
                 raw = Prompt.ask("Paste YouTube links or 11-char IDs (comma/space separated)").strip()
                 parsed = self._parse_video_link_input(raw)
                 normalized, invalid = self._normalize_video_links(parsed)
@@ -306,7 +408,7 @@ class Dashboard:
                 input("Press Enter to continue...")
                 continue
 
-            if action == "3":
+            if action == "6":
                 if not youtube_links:
                     input("No queued links to remove. Press Enter...")
                     continue
@@ -321,7 +423,7 @@ class Dashboard:
                 input("Press Enter to continue...")
                 continue
 
-            if action == "4":
+            if action == "7":
                 raw = Prompt.ask("Paste replacement YouTube links or IDs (comma/space separated)").strip()
                 parsed = self._parse_video_link_input(raw)
                 normalized, invalid = self._normalize_video_links(parsed)
@@ -336,7 +438,7 @@ class Dashboard:
                 input("Press Enter to continue...")
                 continue
 
-            if action == "5":
+            if action == "8":
                 if not youtube_links:
                     input("Queue is already empty. Press Enter...")
                     continue
@@ -351,7 +453,7 @@ class Dashboard:
                 input("Press Enter to continue...")
                 continue
 
-            if action == "6":
+            if action == "9":
                 if not youtube_links:
                     input("Queue is already empty. Press Enter...")
                     continue
@@ -359,6 +461,21 @@ class Dashboard:
                     continue
                 if self._set_youtube_queue([]):
                     self.console.print("[green]Queue cleared.[/green]")
+                input("Press Enter to continue...")
+                continue
+
+            if action == "10":
+                ok, message = self.yt_handler.probe_video_access()
+                if ok:
+                    self.console.print(f"[green]{message}[/green]")
+                else:
+                    self.console.print(
+                        Panel(
+                            f"[yellow]{message}[/yellow]",
+                            title="YouTube Probe Warning",
+                            border_style="yellow",
+                        )
+                    )
                 input("Press Enter to continue...")
                 continue
 
@@ -483,17 +600,17 @@ class Dashboard:
                     (
                         "[bold cyan]1.[/bold cyan] Ollama Model\n"
                         "[bold cyan]2.[/bold cyan] Whisper Model\n"
-                        "[bold cyan]3.[/bold cyan] User Query\n"
+                        "[bold cyan]3.[/bold cyan] User Query (Editor)\n"
                         "[bold cyan]4.[/bold cyan] Merge Distance\n"
                         "[bold cyan]5.[/bold cyan] AI Loops\n"
                         "[bold cyan]6.[/bold cyan] Temperature\n"
                         "[bold cyan]7.[/bold cyan] Output Directory\n"
-                        "[bold cyan]8.[/bold cyan] Channels\n"
-                        "[bold cyan]9.[/bold cyan] Channel Hours Limit\n"
-                        "[bold cyan]10.[/bold cyan] Log Mode (Prod/Dev)\n"
-                        "[bold cyan]11.[/bold cyan] Temp Cleanup Policy\n"
-                        "[bold cyan]12.[/bold cyan] Chunk Overlap Segments\n"
-                        "[bold cyan]13.[/bold cyan] Bridge Edge Segments\n"
+                        "[bold cyan]8.[/bold cyan] Performance Level\n"
+                        "[bold cyan]9.[/bold cyan] Log Mode (Prod/Dev)\n"
+                        "[bold cyan]10.[/bold cyan] Temp Cleanup Policy\n"
+                        "[bold cyan]11.[/bold cyan] Chunk Overlap Segments\n"
+                        "[bold cyan]12.[/bold cyan] Bridge Edge Segments\n"
+                        "[bold cyan]13.[/bold cyan] Temp Run Save\n"
                         "[bold cyan]0.[/bold cyan] Back"
                     ),
                     title="Settings",
@@ -502,6 +619,7 @@ class Dashboard:
             )
             choice = Prompt.ask("Select an option", default="0")
             snapshot = copy.deepcopy(self.config)
+            recalc_tokens = False
 
             if choice == "0":
                 return
@@ -552,6 +670,7 @@ class Dashboard:
                                     )
                                 )
                             )
+                    recalc_tokens = True
             elif choice == "2":
                 self.config["transcription"]["model"] = Prompt.ask(
                     "Whisper model",
@@ -559,9 +678,15 @@ class Dashboard:
                     default=str(self.config["transcription"]["model"]),
                 )
             elif choice == "3":
-                query = Prompt.ask("User query", default=str(self.config["clipping"]["user_query"])).strip()
+                current_query = str(self.config["clipping"]["user_query"])
+                self.console.print("[cyan]Opening editor for user query...[/cyan]")
+                query = edit_text_in_editor(
+                    current_query,
+                    filename_hint="ai_auto_clipper_user_query.txt",
+                ).strip()
                 if query:
                     self.config["clipping"]["user_query"] = query
+                    recalc_tokens = True
             elif choice == "4":
                 self.config["clipping"]["merge_distance_seconds"] = IntPrompt.ask(
                     "Merge distance (seconds)",
@@ -585,21 +710,21 @@ class Dashboard:
                 if output_dir:
                     self.config["paths"]["output_dir"] = str(Path(output_dir.strip('"')))
             elif choice == "8":
-                self._manage_channels()
-                continue
-            elif choice == "9":
-                self.config["clipping"]["channels_hours_limit"] = IntPrompt.ask(
-                    "Hours limit",
-                    default=int(self.config["clipping"].get("channels_hours_limit", 24)),
+                runtime_cfg = self.config.setdefault("runtime", {})
+                runtime_cfg["setup_intensity"] = Prompt.ask(
+                    "Performance level",
+                    choices=["light", "balanced", "maximum"],
+                    default=str(runtime_cfg.get("setup_intensity", "balanced")),
                 )
-            elif choice == "10":
+                recalc_tokens = True
+            elif choice == "9":
                 dev_mode = Confirm.ask(
                     "Enable dev logging (DEBUG)?",
                     default=bool(self.config["app"].get("dev_mode", False)),
                 )
                 self.config["app"]["dev_mode"] = dev_mode
                 self.config["app"]["log_level"] = "DEBUG" if dev_mode else "INFO"
-            elif choice == "11":
+            elif choice == "10":
                 cleanup = self.config.setdefault("maintenance", {}).setdefault("temp_cleanup", {})
                 mode = Prompt.ask(
                     "Temp cleanup mode",
@@ -620,16 +745,23 @@ class Dashboard:
                 else:
                     cleanup["max_size_gb"] = int(cleanup.get("max_size_gb", 20))
                     cleanup["max_age_days"] = int(cleanup.get("max_age_days", 30))
-            elif choice == "12":
+            elif choice == "11":
                 runtime_cfg = self.config.setdefault("runtime", {})
                 runtime_cfg["chunk_overlap_segments"] = IntPrompt.ask(
                     "Chunk overlap segments (0-20)",
                     default=int(runtime_cfg.get("chunk_overlap_segments", 3)),
                 )
-            elif choice == "13":
+            elif choice == "12":
                 changed = self._configure_bridge_chunks()
                 if not changed:
                     continue
+            elif choice == "13":
+                runtime_cfg = self.config.setdefault("runtime", {})
+                current = bool(runtime_cfg.get("enable_temp_run_save", True))
+                runtime_cfg["enable_temp_run_save"] = not current
+                self.config.setdefault("clipping", {})["rerun_temp_files"] = runtime_cfg["enable_temp_run_save"]
+                state = "enabled" if runtime_cfg["enable_temp_run_save"] else "disabled"
+                self.console.print(f"[green]Temp run save {state}.[/green]")
             else:
                 self.console.print("[yellow]Invalid option.[/yellow]")
                 continue
@@ -639,6 +771,14 @@ class Dashboard:
                 self.config = snapshot
                 self.console.print(f"[red]Setting change rejected: {errors[0]}[/red]")
                 continue
+
+            if recalc_tokens:
+                self._recalculate_runtime_tokens(announce=True)
+                errors = validate_config(self.config)
+                if errors:
+                    self.config = snapshot
+                    self.console.print(f"[red]Setting change rejected after token update: {errors[0]}[/red]")
+                    continue
 
             self._save_config()
             self.console.print("[green]Settings saved.[/green]")
@@ -653,8 +793,6 @@ class Dashboard:
         )
         current_prompt = str(self.config["clipping"]["system_prompt"])
         self.console.print(Panel(current_prompt, title="Current System Prompt", border_style="cyan"))
-        if not Confirm.ask("Continue and edit system prompt?", default=False):
-            return
         self.console.print("[cyan]Opening external editor for full prompt navigation/editing...[/cyan]")
         prompt_text = edit_text_in_editor(
             current_prompt,
@@ -668,6 +806,11 @@ class Dashboard:
         errors = validate_config(self.config)
         if errors:
             self.console.print(f"[red]Prompt update rejected: {errors[0]}[/red]")
+            return
+        self._recalculate_runtime_tokens(announce=True)
+        errors = validate_config(self.config)
+        if errors:
+            self.console.print(f"[red]Prompt update rejected after token update: {errors[0]}[/red]")
             return
         self._save_config()
         self.console.print("[green]System prompt updated.[/green]")
@@ -840,7 +983,7 @@ class Dashboard:
             elif choice == "2":
                 self._change_settings()
             elif choice == "3":
-                self._manage_youtube_queue()
+                self._youtube_settings()
             elif choice == "4":
                 self._rerun_setup_wizard()
                 input("Press Enter to continue...")

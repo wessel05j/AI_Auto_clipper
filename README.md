@@ -1,4 +1,4 @@
-﻿# AI AUTO CLIPPER
+# AI AUTO CLIPPER
 
 <p align="center">
   <img src="assets/ai-auto-clipper-logo.svg" alt="AI AUTO CLIPPER logo" width="920" />

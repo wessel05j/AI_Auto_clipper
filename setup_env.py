@@ -15,11 +15,13 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
+import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,6 +33,24 @@ CUDA_INDEX_URLS = (
     "https://download.pytorch.org/whl/cu121",
     "https://download.pytorch.org/whl/cu118",
 )
+
+WINDOWS_TOOL_PLAN: Dict[str, Dict[str, Any]] = {
+    "ffmpeg": {"label": "FFmpeg", "id": "Gyan.FFmpeg", "estimate_mb": 180, "required": True},
+    "ollama": {"label": "Ollama", "id": "Ollama.Ollama", "estimate_mb": 1200, "required": True},
+    "node": {"label": "Node.js LTS", "id": "OpenJS.NodeJS.LTS", "estimate_mb": 80, "required": False},
+}
+
+MAC_TOOL_PLAN: Dict[str, Dict[str, Any]] = {
+    "ffmpeg": {"label": "FFmpeg", "brew": "ffmpeg", "estimate_mb": 180, "required": True},
+    "ollama": {"label": "Ollama", "brew": "--cask ollama", "estimate_mb": 1200, "required": True},
+    "node": {"label": "Node.js LTS", "brew": "node", "estimate_mb": 80, "required": False},
+}
+
+LINUX_TOOL_PLAN: Dict[str, Dict[str, Any]] = {
+    "ffmpeg": {"label": "FFmpeg", "estimate_mb": 180, "required": True},
+    "ollama": {"label": "Ollama", "estimate_mb": 1200, "required": True},
+    "node": {"label": "Node.js LTS", "estimate_mb": 80, "required": False},
+}
 
 
 def run_cmd(args: list[str], capture_output: bool = False) -> subprocess.CompletedProcess:
@@ -139,14 +159,214 @@ def install_torch(target: str) -> Tuple[str, Dict[str, Any]]:
     raise ValueError(f"Unknown torch target: {target}")
 
 
-def check_external_tools() -> None:
-    ffmpeg_ok = shutil.which("ffmpeg") is not None
-    ollama_ok = shutil.which("ollama") is not None
+def _detect_linux_package_manager() -> Optional[str]:
+    for manager in ("apt-get", "dnf", "yum", "pacman", "zypper"):
+        if shutil.which(manager):
+            return manager
+    return None
 
-    if not ffmpeg_ok:
-        print("Warning: ffmpeg was not found in PATH. Video rendering may fail.")
-    if not ollama_ok:
-        print("Warning: ollama CLI was not found in PATH. Install Ollama to run AI scanning.")
+
+def _collect_dependency_status() -> Dict[str, Any]:
+    return {
+        "python": shutil.which("python") is not None or shutil.which("python3") is not None,
+        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffprobe": shutil.which("ffprobe") is not None,
+        "ollama": shutil.which("ollama") is not None,
+        "node": shutil.which("node") is not None,
+        "deno": shutil.which("deno") is not None,
+        "yt_dlp_module": importlib.util.find_spec("yt_dlp") is not None,
+    }
+
+
+def _probe_youtube_cookie_sources() -> Tuple[bool, str]:
+    cookie_candidates = (
+        BASE_DIR / "resources" / "cookies.txt",
+        BASE_DIR / "system" / "cookies.txt",
+        BASE_DIR / "cookies.txt",
+    )
+    for candidate in cookie_candidates:
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return True, f"Found cookies file at {candidate}."
+
+    if importlib.util.find_spec("yt_dlp") is None:
+        return False, "yt-dlp module is unavailable for cookie probe."
+
+    try:
+        import yt_dlp  # type: ignore
+    except Exception as exc:
+        return False, f"yt-dlp import failed: {exc}"
+
+    for browser in ("firefox", "edge", "chrome", "brave", "opera", "vivaldi"):
+        test_opts: Dict[str, Any] = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "playlist_items": "1",
+            "cookiesfrombrowser": (browser,),
+            "ignoreerrors": True,
+            "no_warnings": True,
+            "ignoreconfig": True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                result = ydl.extract_info("https://www.youtube.com/@YouTube/videos", download=False)
+            if result and result.get("entries"):
+                return True, f"Browser cookie extraction works with {browser}."
+        except Exception:
+            continue
+    return False, "No cookie file/browser cookie source is currently usable for YouTube."
+
+
+def _build_install_commands(missing_tools: List[str]) -> Tuple[List[Tuple[str, int, Any]], List[str]]:
+    commands: List[Tuple[str, int, Any]] = []
+    notes: List[str] = []
+    system_name = platform.system().lower()
+
+    if system_name == "windows":
+        if shutil.which("winget") is None:
+            notes.append("winget is not installed. Install tools manually from vendor sites.")
+            return commands, notes
+        for tool in missing_tools:
+            meta = WINDOWS_TOOL_PLAN.get(tool)
+            if not meta:
+                continue
+            cmd = [
+                "winget",
+                "install",
+                "--id",
+                str(meta["id"]),
+                "-e",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ]
+            commands.append((str(meta["label"]), int(meta["estimate_mb"]), cmd))
+        return commands, notes
+
+    if system_name == "darwin":
+        if shutil.which("brew") is None:
+            notes.append("Homebrew not found. Install from https://brew.sh first.")
+            return commands, notes
+        for tool in missing_tools:
+            meta = MAC_TOOL_PLAN.get(tool)
+            if not meta:
+                continue
+            package_arg = str(meta["brew"])
+            cmd = f"brew install {package_arg}"
+            commands.append((str(meta["label"]), int(meta["estimate_mb"]), cmd))
+        return commands, notes
+
+    package_manager = _detect_linux_package_manager()
+    if package_manager is None:
+        notes.append("No supported Linux package manager detected (apt/dnf/yum/pacman/zypper).")
+        return commands, notes
+
+    if "ffmpeg" in missing_tools:
+        if package_manager == "apt-get":
+            commands.append(("FFmpeg", 180, "sudo apt-get update && sudo apt-get install -y ffmpeg"))
+        elif package_manager == "dnf":
+            commands.append(("FFmpeg", 180, "sudo dnf install -y ffmpeg ffmpeg-libs"))
+        elif package_manager == "yum":
+            commands.append(("FFmpeg", 180, "sudo yum install -y ffmpeg"))
+        elif package_manager == "pacman":
+            commands.append(("FFmpeg", 180, "sudo pacman -S --noconfirm ffmpeg"))
+        elif package_manager == "zypper":
+            commands.append(("FFmpeg", 180, "sudo zypper --non-interactive install ffmpeg"))
+
+    if "node" in missing_tools:
+        if package_manager == "apt-get":
+            commands.append(("Node.js LTS", 80, "sudo apt-get install -y nodejs npm"))
+        elif package_manager == "dnf":
+            commands.append(("Node.js LTS", 80, "sudo dnf install -y nodejs npm"))
+        elif package_manager == "yum":
+            commands.append(("Node.js LTS", 80, "sudo yum install -y nodejs npm"))
+        elif package_manager == "pacman":
+            commands.append(("Node.js LTS", 80, "sudo pacman -S --noconfirm nodejs npm"))
+        elif package_manager == "zypper":
+            commands.append(("Node.js LTS", 80, "sudo zypper --non-interactive install nodejs npm"))
+
+    if "ollama" in missing_tools:
+        commands.append(("Ollama", 1200, "curl -fsSL https://ollama.com/install.sh | sh"))
+
+    notes.append("For Linux, Ollama may require relogin/service restart after installation.")
+    return commands, notes
+
+
+def _run_install_command(command: Any) -> bool:
+    try:
+        if isinstance(command, list):
+            result = subprocess.run(command, check=False)
+        else:
+            result = subprocess.run(str(command), shell=True, check=False)
+    except Exception as exc:
+        print(f"Install command failed to start: {exc}")
+        return False
+    return result.returncode == 0
+
+
+def check_external_tools() -> bool:
+    status = _collect_dependency_status()
+    required_tools = ("ffmpeg", "ffprobe", "ollama")
+    missing_required = [tool for tool in required_tools if not status.get(tool)]
+    missing_optional = [tool for tool in ("node",) if not status.get(tool)]
+
+    print("\nDependency doctor:")
+    for key in ("python", "ffmpeg", "ffprobe", "ollama", "node", "deno", "yt_dlp_module"):
+        state = "OK" if status.get(key) else "MISSING"
+        print(f"- {key}: {state}")
+
+    probe_ok, probe_message = _probe_youtube_cookie_sources()
+    if probe_ok:
+        print(f"- youtube_cookie_probe: OK ({probe_message})")
+    else:
+        print(f"- youtube_cookie_probe: WARNING ({probe_message})")
+
+    if not missing_required and not missing_optional:
+        return True
+
+    missing_tools = sorted(set(missing_required + missing_optional))
+    commands, notes = _build_install_commands(missing_tools)
+    if commands:
+        total_estimate = sum(item[1] for item in commands)
+        print("\nInstall plan:")
+        for label, estimate_mb, command in commands:
+            command_text = " ".join(command) if isinstance(command, list) else str(command)
+            print(f"- {label}: ~{estimate_mb} MB")
+            print(f"  Command: {command_text}")
+        print(f"Estimated total download size: ~{total_estimate} MB")
+    else:
+        print("\nNo automatic installer is available for the current platform setup.")
+
+    for note in notes:
+        print(f"Note: {note}")
+
+    if not commands:
+        return len(missing_required) == 0
+
+    if not sys.stdin.isatty():
+        print("Non-interactive shell detected; skipping auto-install prompt.")
+        return len(missing_required) == 0
+
+    reply = input("Install missing dependencies now? [y/N]: ").strip().lower()
+    if reply not in {"y", "yes"}:
+        print("Auto-install skipped by user.")
+        return len(missing_required) == 0
+
+    all_ok = True
+    for label, _, command in commands:
+        print(f"Installing {label}...")
+        ok = _run_install_command(command)
+        all_ok = all_ok and ok
+        if not ok:
+            print(f"Warning: install command failed for {label}.")
+
+    post_status = _collect_dependency_status()
+    post_missing_required = [tool for tool in required_tools if not post_status.get(tool)]
+    if post_missing_required:
+        print(f"Required tools still missing: {', '.join(post_missing_required)}")
+        return False
+    if not all_ok:
+        print("Some optional installs failed; continuing.")
+    return True
 
 
 def should_skip_setup(
@@ -216,8 +436,8 @@ def main() -> int:
         args.force,
     ):
         print("Environment already prepared. Skipping dependency install.")
-        check_external_tools()
-        return 0
+        tools_ok = check_external_tools()
+        return 0 if tools_ok else 1
 
     try:
         if not args.skip_pip_upgrade:
@@ -250,8 +470,8 @@ def main() -> int:
             f"Torch version: {torch_info_after.get('version')} "
             f"(CUDA available: {torch_info_after.get('cuda_available')})"
         )
-    check_external_tools()
-    return 0
+    tools_ok = check_external_tools()
+    return 0 if tools_ok else 1
 
 
 if __name__ == "__main__":

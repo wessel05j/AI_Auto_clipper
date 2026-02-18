@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -73,8 +75,20 @@ def load_json_file(path: Path) -> Any:
 
 def save_json_file(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=True)
+    temp_fd, temp_path = tempfile.mkstemp(
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=True)
+        Path(temp_path).replace(path)
+    finally:
+        try:
+            Path(temp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def build_default_config() -> Dict[str, Any]:
@@ -108,6 +122,7 @@ def build_default_config() -> Dict[str, Any]:
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
             "merge_distance_seconds": 20,
             "ai_loops": 2,
+            "enable_youtube_downloads": True,
             "youtube_links": [],
             "channels": [],
             "channels_hours_limit": 24,
@@ -121,6 +136,7 @@ def build_default_config() -> Dict[str, Any]:
             "chunk_overlap_segments": 3,
             "enable_bridge_chunks": True,
             "bridge_chunk_edge_segments": 4,
+            "enable_temp_run_save": True,
         },
         "maintenance": {
             "temp_cleanup": {
@@ -166,6 +182,9 @@ def migrate_legacy_settings(base_dir: Path) -> Optional[Dict[str, Any]]:
     config["clipping"]["channels_hours_limit"] = int(
         legacy.get("channels_hours_limit", config["clipping"]["channels_hours_limit"])
     )
+    config["clipping"]["enable_youtube_downloads"] = bool(
+        legacy.get("enable_youtube_downloads", config["clipping"]["enable_youtube_downloads"])
+    )
     config["clipping"]["rerun_temp_files"] = bool(
         legacy.get("rerun_temp_files", config["clipping"]["rerun_temp_files"])
     )
@@ -174,6 +193,9 @@ def migrate_legacy_settings(base_dir: Path) -> Optional[Dict[str, Any]]:
     )
     config["runtime"]["max_chunk_tokens"] = int(
         legacy.get("max_chunking_tokens", config["runtime"]["max_chunk_tokens"])
+    )
+    config["runtime"]["enable_temp_run_save"] = bool(
+        legacy.get("rerun_temp_files", config["runtime"]["enable_temp_run_save"])
     )
     return config
 
@@ -273,6 +295,10 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
         errors.append("clipping.youtube_links must be a list")
     if not isinstance(config["clipping"].get("channels", []), list):
         errors.append("clipping.channels must be a list")
+    if "enable_youtube_downloads" not in config["clipping"]:
+        config["clipping"]["enable_youtube_downloads"] = True
+    if not isinstance(config["clipping"].get("enable_youtube_downloads", True), bool):
+        errors.append("clipping.enable_youtube_downloads must be true/false")
 
     log_level = str(config["app"].get("log_level", "")).upper()
     if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
@@ -305,6 +331,13 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     )
     if not isinstance(config["runtime"].get("enable_bridge_chunks", True), bool):
         errors.append("runtime.enable_bridge_chunks must be true/false")
+    if "enable_temp_run_save" not in config["runtime"]:
+        config["runtime"]["enable_temp_run_save"] = bool(
+            config["clipping"].get("rerun_temp_files", True)
+        )
+    if not isinstance(config["runtime"].get("enable_temp_run_save", True), bool):
+        errors.append("runtime.enable_temp_run_save must be true/false")
+    config["clipping"]["rerun_temp_files"] = bool(config["runtime"].get("enable_temp_run_save", True))
     _validate_range(
         errors,
         "runtime.bridge_chunk_edge_segments",
@@ -369,9 +402,13 @@ def load_validated_config(base_dir: Path) -> Tuple[bool, Optional[Dict[str, Any]
     if not isinstance(config, dict):
         return False, None, ["config/config.json must be a JSON object"]
 
+    before_normalization = json.dumps(config, sort_keys=True, ensure_ascii=True)
     errors = validate_config(config)
     if errors:
         return False, config, errors
+    after_normalization = json.dumps(config, sort_keys=True, ensure_ascii=True)
+    if after_normalization != before_normalization:
+        save_json_file(config_file, config)
     return True, config, []
 
 
