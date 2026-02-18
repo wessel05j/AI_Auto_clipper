@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import gc
+import hashlib
 import json
 import logging
 import re
@@ -12,7 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 
 from rich.console import Console
 from rich.panel import Panel
@@ -29,7 +30,7 @@ from rich.table import Table
 from rich.text import Text
 import requests
 
-from core.ai_pipeline import AIPipeline, chunk_transcript
+from core.ai_pipeline import AIPipeline, chunk_transcript, estimate_tokens
 from core.clipping import (
     extract_clips,
     merge_segments,
@@ -77,6 +78,10 @@ class _OptionalTimeRemainingColumn(TimeRemainingColumn):
         return super().render(task)
 
 
+class _SettingsChangedError(RuntimeError):
+    """Raised when config changes on disk while processing a video."""
+
+
 class ClippingEngine:
     """Main runtime engine that orchestrates download, transcription, AI scan, and clip extraction."""
 
@@ -93,6 +98,7 @@ class ClippingEngine:
         self.temp_dir = base_dir / str(paths_cfg.get("temp_dir", "temp"))
         self.system_dir = base_dir / str(paths_cfg.get("system_dir", "system"))
         self.status_file = self.system_dir / "status.json"
+        self.run_cache_dir = self.system_dir / "run_cache"
         self._config_paths = config_paths(self.base_dir)
         self.hardware_profile = load_optional_profile(self._config_paths["hardware_file"])
 
@@ -100,12 +106,116 @@ class ClippingEngine:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.system_dir.mkdir(parents=True, exist_ok=True)
+        self.run_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _persist_config(self) -> None:
         save_json_file(self._config_paths["config_file"], self.config)
 
     def _write_status(self, payload: Dict[str, Any]) -> None:
         save_json_file(self.status_file, payload)
+
+    def _temp_run_save_enabled(self) -> bool:
+        runtime_cfg = self.config.get("runtime", {})
+        return bool(runtime_cfg.get("enable_temp_run_save", True))
+
+    @staticmethod
+    def _resume_signature_from_config(config: Dict[str, Any]) -> str:
+        clipping = config.get("clipping", {})
+        runtime_cfg = config.get("runtime", {})
+        ollama_cfg = config.get("ollama", {})
+        paths_cfg = config.get("paths", {})
+
+        payload = {
+            "clipping": {
+                "user_query": str(clipping.get("user_query", "")),
+                "system_prompt": str(clipping.get("system_prompt", "")),
+                "merge_distance_seconds": int(clipping.get("merge_distance_seconds", 20)),
+                "ai_loops": int(clipping.get("ai_loops", 2)),
+                "clip_progress_interval": int(clipping.get("clip_progress_interval", 5)),
+            },
+            "runtime": {
+                "total_context_tokens": int(runtime_cfg.get("total_context_tokens", 8192)),
+                "max_chunk_tokens": int(runtime_cfg.get("max_chunk_tokens", 6000)),
+                "chunk_overlap_segments": int(runtime_cfg.get("chunk_overlap_segments", 3)),
+                "enable_bridge_chunks": bool(runtime_cfg.get("enable_bridge_chunks", True)),
+                "bridge_chunk_edge_segments": int(runtime_cfg.get("bridge_chunk_edge_segments", 4)),
+            },
+            "ollama": {
+                "model": str(ollama_cfg.get("model", "")),
+                "max_output_tokens": int(ollama_cfg.get("max_output_tokens", 900)),
+                "context_window": int(ollama_cfg.get("context_window", 8192)),
+                "temperature": float(ollama_cfg.get("temperature", 0.2)),
+            },
+            "paths": {
+                "output_dir": str(paths_cfg.get("output_dir", "output")),
+            },
+        }
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def _current_resume_signature(self) -> str:
+        return self._resume_signature_from_config(self.config)
+
+    def _disk_resume_signature(self) -> str:
+        on_disk = load_optional_profile(self._config_paths["config_file"])
+        if not on_disk:
+            return self._current_resume_signature()
+        return self._resume_signature_from_config(on_disk)
+
+    def _assert_settings_unchanged(self, expected_signature: str) -> None:
+        current_signature = self._disk_resume_signature()
+        if current_signature == expected_signature:
+            return
+
+        latest = load_optional_profile(self._config_paths["config_file"])
+        if latest:
+            self.config = latest
+        raise _SettingsChangedError(
+            "Detected settings change during run. Restarting current video with latest settings."
+        )
+
+    @staticmethod
+    def _video_fingerprint(video: Path) -> str:
+        stat = video.stat()
+        payload = f"{video.resolve()}|{int(stat.st_size)}|{int(stat.st_mtime)}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _video_checkpoint_path(self, video: Path) -> Path:
+        fingerprint = self._video_fingerprint(video)
+        return self.run_cache_dir / f"{fingerprint}.json"
+
+    def _load_video_checkpoint(self, video: Path, signature: str) -> Dict[str, Any]:
+        if not self._temp_run_save_enabled():
+            return {}
+
+        checkpoint_path = self._video_checkpoint_path(video)
+        if not checkpoint_path.exists():
+            return {}
+
+        payload = load_optional_profile(checkpoint_path)
+        if not payload:
+            return {}
+
+        expected_fingerprint = self._video_fingerprint(video)
+        if str(payload.get("video_fingerprint", "")) != expected_fingerprint:
+            return {}
+        if str(payload.get("config_signature", "")) != signature:
+            return {}
+        return payload
+
+    def _save_video_checkpoint(self, video: Path, payload: Dict[str, Any]) -> None:
+        if not self._temp_run_save_enabled():
+            return
+        payload["video_fingerprint"] = self._video_fingerprint(video)
+        payload["config_signature"] = payload.get("config_signature") or self._current_resume_signature()
+        payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_json_file(self._video_checkpoint_path(video), payload)
+
+    def _clear_video_checkpoint(self, video: Path) -> None:
+        try:
+            self._video_checkpoint_path(video).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def _load_whisper_model(self):
         import whisper
@@ -127,13 +237,39 @@ class ClippingEngine:
     def _download_pending_links(
         self,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
+        enabled = bool(self.config.get("clipping", {}).get("enable_youtube_downloads", True))
         links = list(self.config["clipping"].get("youtube_links", []))
         total_links = len(links)
+        summary: Dict[str, Any] = {
+            "enabled": enabled,
+            "total": total_links,
+            "downloaded": 0,
+            "already_downloaded": 0,
+            "failed": 0,
+            "invalid": 0,
+            "issues": [],
+        }
         if progress_callback:
             progress_callback(0, total_links, "starting")
+
+        if not enabled:
+            self.logger.info("YouTube downloading is disabled in settings. Skipping queued links.")
+            if progress_callback:
+                progress_callback(total_links, total_links, "disabled")
+            return summary
+
         if not links:
-            return
+            return summary
+
+        diagnostics = self.yt_handler.diagnostics()
+        has_cookie_source = bool(diagnostics.get("cookie_file") or diagnostics.get("browser_cookie_source"))
+        has_js_runtime = bool(diagnostics.get("js_runtimes"))
+        if not has_cookie_source:
+            warning = "No cookie source detected. Some YouTube videos may fail."
+            if not has_js_runtime:
+                warning += " Node/Deno not detected, JS challenge solving is limited."
+            summary["issues"].append({"url": "youtube-preflight", "error": warning})
 
         self.logger.info("Downloading %s queued YouTube links", len(links))
         remaining: List[str] = []
@@ -141,33 +277,50 @@ class ClippingEngine:
             normalized_link = self.yt_handler.normalize_video_url(str(link))
             if not normalized_link:
                 self.logger.warning("Skipping empty/invalid YouTube link: %s", link)
+                remaining.append(str(link))
+                summary["invalid"] += 1
+                summary["failed"] += 1
+                summary["issues"].append({"url": str(link), "error": "Invalid YouTube URL or video ID."})
                 if progress_callback:
                     progress_callback(index, total_links, "invalid link")
                 continue
             try:
                 if progress_callback:
                     progress_callback(index - 1, total_links, f"downloading {index}/{total_links}")
-                downloaded = self.yt_handler.download_video(url=normalized_link, output_dir=self.input_dir)
+                result = self.yt_handler.download_video(url=normalized_link, output_dir=self.input_dir)
             except Exception as exc:
                 self.logger.warning("Error downloading %s: %s", normalized_link, exc)
                 remaining.append(normalized_link)
+                summary["failed"] += 1
+                summary["issues"].append({"url": normalized_link, "error": str(exc)})
                 if progress_callback:
                     progress_callback(index, total_links, "failed")
                 continue
 
-            if downloaded:
-                self.logger.info("Downloaded: %s", downloaded)
+            if result.status == "downloaded":
+                summary["downloaded"] += 1
+                self.logger.info("Downloaded: %s", result.path)
                 if progress_callback:
                     progress_callback(index, total_links, "downloaded")
-            else:
-                self.logger.info("Skipped or failed: %s", normalized_link)
+            elif result.status == "already_downloaded":
+                summary["already_downloaded"] += 1
+                self.logger.info("Already downloaded, removed from queue: %s", normalized_link)
                 if progress_callback:
-                    progress_callback(index, total_links, "skipped")
+                    progress_callback(index, total_links, "already downloaded")
+            else:
+                summary["failed"] += 1
+                remaining.append(normalized_link)
+                issue = str(result.error or "Unknown download failure.")
+                summary["issues"].append({"url": normalized_link, "error": issue})
+                self.logger.info("Failed download kept in queue: %s (%s)", normalized_link, issue)
+                if progress_callback:
+                    progress_callback(index, total_links, "failed")
 
         self.config["clipping"]["youtube_links"] = remaining
         self._persist_config()
         if progress_callback:
             progress_callback(total_links, total_links, "completed")
+        return summary
 
     def _build_ai_pipeline(self) -> AIPipeline:
         return AIPipeline(
@@ -355,6 +508,35 @@ class ClippingEngine:
         if subtitle:
             self.console.print(f"[cyan]{subtitle}[/cyan]")
 
+    def _show_youtube_download_issues(self, download_summary: Dict[str, Any]) -> None:
+        issues = list(download_summary.get("issues", []))
+        if not issues:
+            return
+
+        lines = [
+            "[bold yellow]YouTube download issues were detected.[/bold yellow]",
+            f"- Failed links kept in queue: {int(download_summary.get('failed', 0))}",
+            f"- Invalid links kept in queue: {int(download_summary.get('invalid', 0))}",
+            "",
+            "Top failures:",
+        ]
+        for item in issues[:5]:
+            url = str(item.get("url", "")).strip()
+            error = str(item.get("error", "")).strip()
+            lines.append(f"- {url or '<unknown>'}")
+            lines.append(f"  {error or 'Unknown error'}")
+        if len(issues) > 5:
+            lines.append(f"- ... and {len(issues) - 5} more")
+
+        self.console.print(
+            Panel(
+                "\n".join(lines),
+                title="YouTube Warning",
+                border_style="yellow",
+            )
+        )
+        input("Press Enter to continue pipeline run...")
+
     def _resolve_runtime_chunk_cap(
         self,
         model_name: str,
@@ -398,6 +580,82 @@ class ClippingEngine:
             effective = min(effective, 2100)
 
         return max(900, int(effective)), float(pressure_ratio)
+
+    @staticmethod
+    def _resolve_prompt_aware_chunk_cap(
+        configured_chunk_tokens: int,
+        total_context_tokens: int,
+        max_output_tokens: int,
+        user_query: str,
+        system_prompt: str,
+    ) -> tuple[int, int, int]:
+        # Reserve room for prompts, policy guardrails, and response framing.
+        prompt_tokens = (
+            estimate_tokens(str(user_query or ""))
+            + estimate_tokens(str(system_prompt or ""))
+            + 700
+        )
+        available = int(total_context_tokens) - int(max_output_tokens) - int(prompt_tokens)
+        if available >= 900:
+            effective = min(int(configured_chunk_tokens), int(available))
+            return max(900, int(effective)), prompt_tokens, int(available)
+
+        # Keep engine functional for very large prompts by allowing smaller chunk caps.
+        effective = max(256, min(int(configured_chunk_tokens), int(max(256, available))))
+        return int(effective), prompt_tokens, int(available)
+
+    def _runtime_video_parameters(self) -> Dict[str, Any]:
+        clipping_cfg = self.config.get("clipping", {})
+        runtime_cfg = self.config.get("runtime", {})
+        ollama_cfg = self.config.get("ollama", {})
+
+        merge_distance = float(clipping_cfg.get("merge_distance_seconds", 20))
+        ai_loops = int(clipping_cfg.get("ai_loops", 2))
+        user_query = str(clipping_cfg.get("user_query", ""))
+        system_prompt = str(clipping_cfg.get("system_prompt", ""))
+        effective_query, min_duration_seconds = self._build_effective_query(user_query)
+
+        model_name = str(ollama_cfg.get("model", ""))
+        configured_chunk_tokens = int(runtime_cfg.get("max_chunk_tokens", 6000))
+        total_context_tokens = int(runtime_cfg.get("total_context_tokens", 8192))
+        max_output_tokens = int(ollama_cfg.get("max_output_tokens", 900))
+        chunk_overlap_segments = int(runtime_cfg.get("chunk_overlap_segments", 3))
+        enable_bridge_chunks = bool(runtime_cfg.get("enable_bridge_chunks", True))
+        bridge_chunk_edge_segments = int(runtime_cfg.get("bridge_chunk_edge_segments", 4))
+        progress_interval = int(clipping_cfg.get("clip_progress_interval", 5))
+
+        runtime_capped_chunk_tokens, pressure_ratio = self._resolve_runtime_chunk_cap(
+            model_name=model_name,
+            configured_chunk_tokens=configured_chunk_tokens,
+        )
+        prompt_capped_chunk_tokens, prompt_tokens, prompt_available = self._resolve_prompt_aware_chunk_cap(
+            configured_chunk_tokens=runtime_capped_chunk_tokens,
+            total_context_tokens=total_context_tokens,
+            max_output_tokens=max_output_tokens,
+            user_query=user_query,
+            system_prompt=system_prompt,
+        )
+        max_chunk_tokens = min(runtime_capped_chunk_tokens, prompt_capped_chunk_tokens)
+
+        return {
+            "merge_distance": merge_distance,
+            "ai_loops": ai_loops,
+            "user_query": user_query,
+            "system_prompt": system_prompt,
+            "effective_query": effective_query,
+            "min_duration_seconds": min_duration_seconds,
+            "model_name": model_name,
+            "configured_chunk_tokens": configured_chunk_tokens,
+            "chunk_overlap_segments": chunk_overlap_segments,
+            "enable_bridge_chunks": enable_bridge_chunks,
+            "bridge_chunk_edge_segments": bridge_chunk_edge_segments,
+            "progress_interval": progress_interval,
+            "runtime_capped_chunk_tokens": runtime_capped_chunk_tokens,
+            "pressure_ratio": pressure_ratio,
+            "prompt_tokens": prompt_tokens,
+            "prompt_available": prompt_available,
+            "max_chunk_tokens": max_chunk_tokens,
+        }
 
     @staticmethod
     def _run_with_activity_heartbeat(
@@ -530,9 +788,11 @@ class ClippingEngine:
 
     def run(self) -> None:
         self._render_engine_frame()
-        self.logger.info("Clipping engine run initialized")
+        run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.logger.info("Clipping engine run initialized (run_id=%s)", run_id)
 
         status: Dict[str, Any] = {
+            "run_id": run_id,
             "total_videos": 0,
             "progress_percent": 0,
             "current_video": None,
@@ -577,8 +837,15 @@ class ClippingEngine:
                         total=1,
                         completed=0,
                     )
-                    ai_clipping_task = progress.add_task(
-                        "[magenta]AI clipping chunks: waiting",
+                    chunk_progress_task = progress.add_task(
+                        "[magenta]Chunks: waiting",
+                        total=1,
+                        completed=0,
+                        start=False,
+                        visible=False,
+                    )
+                    ai_loop_task = progress.add_task(
+                        "[magenta]AI loops: waiting",
                         total=1,
                         completed=0,
                         start=False,
@@ -714,7 +981,7 @@ class ClippingEngine:
     
                     status["current_step"] = "downloading_links"
                     self._write_status(status)
-                    self._download_pending_links(progress_callback=on_download_progress)
+                    download_summary = self._download_pending_links(progress_callback=on_download_progress)
                     if queued_count == 0:
                         progress.update(links_task, total=1, completed=1, description="[yellow]YouTube links: 0/0")
                         progress.update(
@@ -723,8 +990,22 @@ class ClippingEngine:
                             completed=1,
                             description="[green]Activity: No YouTube downloads queued",
                         )
-    
+                    elif not bool(download_summary.get("enabled", True)):
+                        progress.update(
+                            links_task,
+                            total=max(1, queued_count),
+                            completed=max(1, queued_count),
+                            description=f"[yellow]YouTube links: {queued_count}/{queued_count} (disabled)",
+                        )
+                        progress.update(
+                            activity_task,
+                            total=1,
+                            completed=1,
+                            description="[green]Activity: YouTube downloading disabled",
+                        )
+
                     self._apply_temp_cleanup_policy()
+                    self._show_youtube_download_issues(download_summary)
     
                     status["current_step"] = "scanning_input"
                     self._write_status(status)
@@ -755,230 +1036,380 @@ class ClippingEngine:
                     progress.update(activity_task, completed=1)
     
                     ai_pipeline = self._build_ai_pipeline()
-                    merge_distance = float(self.config["clipping"]["merge_distance_seconds"])
-                    ai_loops = int(self.config["clipping"]["ai_loops"])
-                    user_query = str(self.config["clipping"]["user_query"])
-                    effective_query, min_duration_seconds = self._build_effective_query(user_query)
-                    model_name = str(self.config["ollama"]["model"])
-                    configured_chunk_tokens = int(self.config["runtime"]["max_chunk_tokens"])
-                    chunk_overlap_segments = int(self.config.get("runtime", {}).get("chunk_overlap_segments", 3))
-                    enable_bridge_chunks = bool(self.config.get("runtime", {}).get("enable_bridge_chunks", True))
-                    bridge_chunk_edge_segments = int(self.config.get("runtime", {}).get("bridge_chunk_edge_segments", 4))
-                    max_chunk_tokens, pressure_ratio = self._resolve_runtime_chunk_cap(
-                        model_name=model_name,
-                        configured_chunk_tokens=configured_chunk_tokens,
-                    )
-                    progress_interval = int(self.config["clipping"].get("clip_progress_interval", 5))
-                    if min_duration_seconds > 0:
-                        self.logger.info("Applying minimum clip duration: %.1f seconds", min_duration_seconds)
-                    if max_chunk_tokens != configured_chunk_tokens:
+                    initial_runtime = self._runtime_video_parameters()
+                    if initial_runtime["min_duration_seconds"] > 0:
+                        self.logger.info(
+                            "Applying minimum clip duration: %.1f seconds",
+                            initial_runtime["min_duration_seconds"],
+                        )
+                    if initial_runtime["runtime_capped_chunk_tokens"] != initial_runtime["configured_chunk_tokens"]:
                         self.logger.info(
                             "Adjusted chunk token cap from %s to %s for model/hardware pressure (ratio=%.2f).",
-                            configured_chunk_tokens,
-                            max_chunk_tokens,
-                            pressure_ratio,
+                            initial_runtime["configured_chunk_tokens"],
+                            initial_runtime["runtime_capped_chunk_tokens"],
+                            initial_runtime["pressure_ratio"],
                         )
+                    if initial_runtime["max_chunk_tokens"] != initial_runtime["runtime_capped_chunk_tokens"]:
+                        self.logger.info(
+                            (
+                                "Adjusted chunk token cap from %s to %s for prompt pressure "
+                                "(prompt_tokens=%s available_context=%s)."
+                            ),
+                            initial_runtime["runtime_capped_chunk_tokens"],
+                            initial_runtime["max_chunk_tokens"],
+                            initial_runtime["prompt_tokens"],
+                            initial_runtime["prompt_available"],
+                        )
+                    config_signature = self._current_resume_signature()
     
                     for index, video in enumerate(videos, start=1):
                         progress.update(
                             videos_task,
                             description=f"[cyan]Videos: {index - 1}/{len(videos)}",
                         )
-                        progress.reset(activity_task, total=7, completed=0)
+                        progress.reset(activity_task, total=7, completed=0, start=True)
                         progress.update(
-                            ai_clipping_task,
+                            chunk_progress_task,
                             visible=False,
                             total=1,
                             completed=0,
-                            description="[magenta]AI clipping chunks: waiting",
+                            description="[magenta]Chunks: waiting",
+                        )
+                        progress.update(
+                            ai_loop_task,
+                            visible=False,
+                            total=1,
+                            completed=0,
+                            description="[magenta]AI loops: waiting",
                         )
                         progress.update(
                             activity_task,
                             description=f"[green]Activity: Preparing {index}/{len(videos)} {video.name}",
                         )
-    
+
                         status["current_video"] = video.name
                         status["progress_percent"] = round(((index - 1) / len(videos)) * 100, 1)
-                        status["current_step"] = "transcribing"
-                        self._write_status(status)
-                        progress.update(activity_task, description="[green]Activity: Transcribing")
-                        progress.refresh()
-
-                        try:
-                            transcript = transcribe_video(
-                                video_path=video,
-                                whisper_model=whisper_model,
-                                logger=self.logger,
-                            )
-                            progress.advance(activity_task)
-                            if not transcript:
-                                self.logger.warning("Empty transcript for %s", video.name)
-                                continue
-
-                            status["current_step"] = "chunking"
+                        processed_video = False
+                        while not processed_video:
+                            config_signature = self._current_resume_signature()
+                            runtime = self._runtime_video_parameters()
+                            merge_distance = float(runtime["merge_distance"])
+                            ai_loops = int(runtime["ai_loops"])
+                            effective_query = str(runtime["effective_query"])
+                            min_duration_seconds = float(runtime["min_duration_seconds"])
+                            max_chunk_tokens = int(runtime["max_chunk_tokens"])
+                            chunk_overlap_segments = int(runtime["chunk_overlap_segments"])
+                            enable_bridge_chunks = bool(runtime["enable_bridge_chunks"])
+                            bridge_chunk_edge_segments = int(runtime["bridge_chunk_edge_segments"])
+                            progress_interval = int(runtime["progress_interval"])
+                            checkpoint = self._load_video_checkpoint(video=video, signature=config_signature)
+                            checkpoint["config_signature"] = config_signature
+                            status["current_step"] = "transcribing"
                             self._write_status(status)
-                            progress.update(activity_task, description="[green]Activity: Chunking transcript")
+                            progress.update(activity_task, description="[green]Activity: Transcribing")
                             progress.refresh()
-                            base_chunks = chunk_transcript(
-                                transcript=transcript,
-                                max_tokens=max_chunk_tokens,
-                                overlap_segments=max(0, chunk_overlap_segments),
-                            )
-                            if enable_bridge_chunks:
-                                chunks, bridge_count = self._augment_chunks_with_bridges(
-                                    base_chunks,
-                                    max_bridge_segments=max(1, bridge_chunk_edge_segments),
-                                )
-                            else:
-                                chunks, bridge_count = base_chunks, 0
-                            run_stats["ai_clipping_base_chunks"] += len(base_chunks)
-                            run_stats["ai_clipping_bridge_chunks"] += int(bridge_count)
-                            refresh_activity_panel()
-                            progress.advance(activity_task)
-                            if not chunks:
-                                self.logger.warning("No chunks created for %s", video.name)
-                                continue
 
-                            status["current_step"] = "ai_scanning"
-                            self._write_status(status)
-                            progress.update(activity_task, description="[green]Activity: AI clipping scanning")
-                            progress.refresh()
-                            total_scan_steps = max(1, len(chunks) * max(1, ai_loops))
-                            progress.reset(
-                                ai_clipping_task,
-                                total=total_scan_steps,
-                                completed=0,
-                                start=True,
-                            )
-                            progress.update(
-                                ai_clipping_task,
-                                visible=True,
-                                description=f"[magenta]AI clipping chunks: 0/{total_scan_steps}",
-                            )
-                            scanned_baseline = int(run_stats["ai_clipping_chunks_scanned"])
-                            if enable_bridge_chunks:
-                                ai_clipping_scan_context = f"({len(base_chunks)} base + {bridge_count} bridge chunks)"
-                            else:
-                                ai_clipping_scan_context = f"({len(base_chunks)} base chunks)"
-                            progress.update(
-                                activity_task,
-                                description=(
-                                    "[green]Activity: AI clipping scanning "
-                                    f"{ai_clipping_scan_context}"
-                                ),
-                            )
-    
-                            def on_ai_clipping_progress(
-                                chunk_index: int,
-                                total_chunks: int,
-                                loop_index: int,
-                                total_loops: int,
-                                clips_found_in_step: int,
-                            ) -> None:
-                                completed_steps = ((chunk_index - 1) * total_loops) + loop_index
-                                run_stats["ai_clipping_chunks_scanned"] = (
-                                    scanned_baseline + min(completed_steps, total_scan_steps)
-                                )
-                                run_stats["ai_clipping_candidates"] += max(0, int(clips_found_in_step))
-                                progress.update(
-                                    activity_task,
-                                    description=(
-                                        "[green]Activity: AI clipping chunk "
-                                        f"{chunk_index}/{total_chunks} (loop {loop_index}/{total_loops})"
-                                    ),
-                                )
-                                progress.update(
-                                    ai_clipping_task,
-                                    completed=min(completed_steps, total_scan_steps),
-                                    description=f"[magenta]AI clipping chunks: {min(completed_steps, total_scan_steps)}/{total_scan_steps}",
-                                )
+                            try:
+                                self._assert_settings_unchanged(config_signature)
+                                transcript = checkpoint.get("transcript")
+                                if not isinstance(transcript, list):
+                                    transcript = transcribe_video(
+                                        video_path=video,
+                                        whisper_model=whisper_model,
+                                        logger=self.logger,
+                                    )
+                                    checkpoint["transcript"] = transcript
+                                    self._save_video_checkpoint(video, checkpoint)
+                                else:
+                                    self.logger.info("Using saved transcript checkpoint for %s", video.name)
+                                progress.advance(activity_task)
+                                if not transcript:
+                                    self.logger.warning("Empty transcript for %s", video.name)
+                                    processed_video = True
+                                    break
+
+                                self._assert_settings_unchanged(config_signature)
+                                status["current_step"] = "chunking"
+                                self._write_status(status)
+                                progress.update(activity_task, description="[green]Activity: Chunking transcript")
+                                progress.refresh()
+                                chunking_state = checkpoint.get("chunking")
+                                chunking_meta = checkpoint.get("chunking_meta", {})
+                                expected_meta = {
+                                    "max_chunk_tokens": int(max_chunk_tokens),
+                                    "chunk_overlap_segments": int(max(0, chunk_overlap_segments)),
+                                    "enable_bridge_chunks": bool(enable_bridge_chunks),
+                                    "bridge_chunk_edge_segments": int(max(1, bridge_chunk_edge_segments)),
+                                }
+                                if (
+                                    isinstance(chunking_state, dict)
+                                    and chunking_meta == expected_meta
+                                    and isinstance(chunking_state.get("base_chunks"), list)
+                                    and isinstance(chunking_state.get("chunks"), list)
+                                ):
+                                    base_chunks = chunking_state.get("base_chunks", [])
+                                    chunks = chunking_state.get("chunks", [])
+                                    bridge_count = int(chunking_state.get("bridge_count", 0))
+                                    self.logger.info("Using saved chunk checkpoint for %s", video.name)
+                                else:
+                                    base_chunks = chunk_transcript(
+                                        transcript=transcript,
+                                        max_tokens=max_chunk_tokens,
+                                        overlap_segments=max(0, chunk_overlap_segments),
+                                    )
+                                    if enable_bridge_chunks:
+                                        chunks, bridge_count = self._augment_chunks_with_bridges(
+                                            base_chunks,
+                                            max_bridge_segments=max(1, bridge_chunk_edge_segments),
+                                        )
+                                    else:
+                                        chunks, bridge_count = base_chunks, 0
+                                    checkpoint["chunking"] = {
+                                        "base_chunks": base_chunks,
+                                        "chunks": chunks,
+                                        "bridge_count": int(bridge_count),
+                                    }
+                                    checkpoint["chunking_meta"] = expected_meta
+                                    self._save_video_checkpoint(video, checkpoint)
+                                run_stats["ai_clipping_base_chunks"] += len(base_chunks)
+                                run_stats["ai_clipping_bridge_chunks"] += int(bridge_count)
                                 refresh_activity_panel()
-    
-                            raw_clip_groups = ai_pipeline.scan_all_chunks(
-                                chunks=chunks,
-                                user_query=effective_query,
-                                ai_loops=ai_loops,
-                                progress_callback=on_ai_clipping_progress,
-                            )
-                            refresh_activity_panel()
-                            progress.update(ai_clipping_task, visible=False)
-                            progress.advance(activity_task)
+                                progress.advance(activity_task)
+                                if not chunks:
+                                    self.logger.warning("No chunks created for %s", video.name)
+                                    processed_video = True
+                                    break
 
-                            status["current_step"] = "merging_segments"
-                            self._write_status(status)
-                            progress.update(activity_task, description="[green]Activity: Merging segments")
-                            progress.refresh()
-                            merged_clips = merge_segments(raw_clip_groups, tolerance_seconds=merge_distance)
-                            run_stats["merged_candidates"] += len(merged_clips)
-                            refresh_activity_panel()
-                            progress.advance(activity_task)
-
-                            status["current_step"] = "filtering_candidates"
-                            self._write_status(status)
-                            progress.update(
-                                activity_task,
-                                description="[green]Activity: Filtering merged candidates",
-                            )
-                            progress.refresh()
-                            final_clips, rejected_short = self._filter_min_duration(
-                                merged_clips,
-                                min_duration_seconds=min_duration_seconds,
-                            )
-                            if rejected_short > 0:
-                                self.logger.debug(
-                                    "Removed %s merged candidates shorter than %.1f seconds.",
-                                    rejected_short,
-                                    min_duration_seconds,
+                                self._assert_settings_unchanged(config_signature)
+                                status["current_step"] = "ai_scanning"
+                                self._write_status(status)
+                                total_chunks = len(chunks)
+                                loop_count = max(1, int(ai_loops))
+                                progress.reset(chunk_progress_task, total=total_chunks, completed=0, start=True)
+                                progress.reset(ai_loop_task, total=loop_count, completed=0, start=True)
+                                progress.update(chunk_progress_task, visible=True, description=f"[magenta]Chunks: 0/{total_chunks}")
+                                progress.update(
+                                    ai_loop_task,
+                                    visible=True,
+                                    description=f"[magenta]AI loops: 0/{loop_count} (chunk 1/{total_chunks})",
                                 )
-                            progress.advance(activity_task)
+                                progress.update(activity_task, description=f"[green]Activity: Scanning chunks 0/{total_chunks}")
+                                progress.refresh()
 
-                            status["current_step"] = "extracting_clips"
-                            self._write_status(status)
-                            if not final_clips:
+                                ai_scan_state = checkpoint.get("ai_scan")
+                                if not isinstance(ai_scan_state, dict):
+                                    ai_scan_state = {}
+                                chunk_outputs = ai_scan_state.get("chunk_outputs")
+                                if not isinstance(chunk_outputs, dict):
+                                    chunk_outputs = {}
+
+                                raw_clip_groups: List[List[List[float]]] = []
+                                for chunk_index, chunk in enumerate(chunks, start=1):
+                                    progress.update(
+                                        chunk_progress_task,
+                                        completed=chunk_index - 1,
+                                        description=f"[magenta]Chunks: {chunk_index - 1}/{total_chunks}",
+                                    )
+                                    progress.update(
+                                        activity_task,
+                                        description=f"[green]Activity: Scanning chunks {chunk_index}/{total_chunks}",
+                                    )
+                                    progress.update(
+                                        ai_loop_task,
+                                        completed=0,
+                                        description=f"[magenta]AI loops: 0/{loop_count} (chunk {chunk_index}/{total_chunks})",
+                                    )
+                                    loop_outputs = chunk_outputs.get(str(chunk_index))
+                                    if not isinstance(loop_outputs, dict):
+                                        loop_outputs = {}
+                                    combined: List[List[float]] = []
+
+                                    for loop_index in range(1, loop_count + 1):
+                                        self._assert_settings_unchanged(config_signature)
+                                        progress.update(
+                                            ai_loop_task,
+                                            completed=loop_index - 1,
+                                            description=(
+                                                f"[magenta]AI loops: {loop_index - 1}/{loop_count} "
+                                                f"(chunk {chunk_index}/{total_chunks})"
+                                            ),
+                                        )
+                                        cached = loop_outputs.get(str(loop_index))
+                                        if isinstance(cached, list):
+                                            output = cached
+                                        else:
+                                            output = ai_pipeline.scan_chunk_with_retries(
+                                                chunk=chunk,
+                                                user_query=effective_query,
+                                            )
+                                            loop_outputs[str(loop_index)] = output
+                                            chunk_outputs[str(chunk_index)] = loop_outputs
+                                            ai_scan_state["chunk_outputs"] = chunk_outputs
+                                            checkpoint["ai_scan"] = ai_scan_state
+                                            self._save_video_checkpoint(video, checkpoint)
+                                        combined.extend(output)
+                                        run_stats["ai_clipping_chunks_scanned"] += 1
+                                        run_stats["ai_clipping_candidates"] += len(output)
+                                        progress.update(
+                                            ai_loop_task,
+                                            completed=loop_index,
+                                            description=(
+                                                f"[magenta]AI loops: {loop_index}/{loop_count} "
+                                                f"(chunk {chunk_index}/{total_chunks})"
+                                            ),
+                                        )
+                                        refresh_activity_panel()
+
+                                    raw_clip_groups.append(combined)
+                                    progress.update(
+                                        chunk_progress_task,
+                                        completed=chunk_index,
+                                        description=f"[magenta]Chunks: {chunk_index}/{total_chunks}",
+                                    )
+
+                                checkpoint["ai_scan"] = ai_scan_state
+                                checkpoint["raw_clip_groups"] = raw_clip_groups
+                                self._save_video_checkpoint(video, checkpoint)
+                                progress.update(chunk_progress_task, visible=False)
+                                progress.update(ai_loop_task, visible=False)
+                                progress.advance(activity_task)
+
+                                self._assert_settings_unchanged(config_signature)
+                                status["current_step"] = "merging_segments"
+                                self._write_status(status)
+                                progress.update(activity_task, description="[green]Activity: Merging segments")
+                                progress.refresh()
+                                merged_clips = checkpoint.get("merged_clips")
+                                if not isinstance(merged_clips, list):
+                                    merged_clips = merge_segments(raw_clip_groups, tolerance_seconds=merge_distance)
+                                    checkpoint["merged_clips"] = merged_clips
+                                    self._save_video_checkpoint(video, checkpoint)
+                                run_stats["merged_candidates"] += len(merged_clips)
+                                refresh_activity_panel()
+                                progress.advance(activity_task)
+
+                                self._assert_settings_unchanged(config_signature)
+                                status["current_step"] = "filtering_candidates"
+                                self._write_status(status)
+                                progress.update(activity_task, description="[green]Activity: Filtering merged candidates")
+                                progress.refresh()
+                                final_clips = checkpoint.get("final_clips")
+                                rejected_short = 0
+                                if not isinstance(final_clips, list):
+                                    final_clips, rejected_short = self._filter_min_duration(
+                                        merged_clips,
+                                        min_duration_seconds=min_duration_seconds,
+                                    )
+                                    checkpoint["final_clips"] = final_clips
+                                    checkpoint["rejected_short"] = int(rejected_short)
+                                    self._save_video_checkpoint(video, checkpoint)
+                                else:
+                                    rejected_short = int(checkpoint.get("rejected_short", 0))
+                                if rejected_short > 0:
+                                    self.logger.debug(
+                                        "Removed %s merged candidates shorter than %.1f seconds.",
+                                        rejected_short,
+                                        min_duration_seconds,
+                                    )
+                                progress.advance(activity_task)
+
+                                self._assert_settings_unchanged(config_signature)
+                                status["current_step"] = "extracting_clips"
+                                self._write_status(status)
+                                extraction_state = checkpoint.get("extraction")
+                                if not isinstance(extraction_state, dict):
+                                    extraction_state = {"completed_indices": []}
+                                completed_raw = extraction_state.get("completed_indices", [])
+                                completed_indices: Set[int] = {
+                                    int(value)
+                                    for value in completed_raw
+                                    if str(value).strip().isdigit()
+                                }
+
+                                if not final_clips:
+                                    progress.advance(activity_task)
+                                    progress.update(activity_task, description="[green]Activity: Archiving source")
+                                    progress.refresh()
+                                    self._archive_video(video)
+                                    self._apply_temp_cleanup_policy()
+                                    progress.advance(activity_task)
+                                    checkpoint["completed"] = True
+                                    self._save_video_checkpoint(video, checkpoint)
+                                    processed_video = True
+                                    break
+
+                                all_indices = list(range(1, len(final_clips) + 1))
+                                remaining_indices = [clip_idx for clip_idx in all_indices if clip_idx not in completed_indices]
+                                remaining_clips = [final_clips[clip_idx - 1] for clip_idx in remaining_indices]
+
+                                progress.update(activity_task, description="[green]Activity: Extracting clips")
+                                progress.refresh()
+
+                                def on_clip_done(clip_index: int, _: str, created: bool) -> None:
+                                    self._assert_settings_unchanged(config_signature)
+                                    completed_indices.add(int(clip_index))
+                                    extraction_state["completed_indices"] = sorted(completed_indices)
+                                    extraction_state["total_clips"] = len(final_clips)
+                                    checkpoint["extraction"] = extraction_state
+                                    self._save_video_checkpoint(video, checkpoint)
+                                    if created:
+                                        run_stats["clips_extracted"] += 1
+                                        refresh_activity_panel()
+
+                                created = 0
+                                if remaining_clips:
+                                    created = extract_clips(
+                                        clips=remaining_clips,
+                                        source_video=video,
+                                        output_dir=self.output_dir,
+                                        logger=self.logger,
+                                        progress_interval=progress_interval,
+                                        clip_name_indices=remaining_indices,
+                                        skip_existing=True,
+                                        on_clip_done=on_clip_done,
+                                    )
+                                self.logger.info(
+                                    "Extracted %s clips from %s (candidates=%s after_filter=%s)",
+                                    created,
+                                    video.name,
+                                    len(merged_clips),
+                                    len(final_clips),
+                                )
                                 progress.advance(activity_task)
                                 progress.update(activity_task, description="[green]Activity: Archiving source")
                                 progress.refresh()
                                 self._archive_video(video)
                                 self._apply_temp_cleanup_policy()
                                 progress.advance(activity_task)
+                                checkpoint["completed"] = True
+                                self._save_video_checkpoint(video, checkpoint)
+                                processed_video = True
+                            except _SettingsChangedError:
+                                self.logger.warning(
+                                    "Settings changed while processing %s. Restarting this video.",
+                                    video.name,
+                                )
+                                self.console.print(
+                                    "[yellow]Settings changed during run. Restarting current video.[/yellow]"
+                                )
+                                self._clear_video_checkpoint(video)
+                                config_signature = self._current_resume_signature()
+                                ai_pipeline = self._build_ai_pipeline()
                                 continue
-    
-                            progress.update(activity_task, description="[green]Activity: Extracting clips")
-                            progress.refresh()
-                            created = extract_clips(
-                                clips=final_clips,
-                                source_video=video,
-                                output_dir=self.output_dir,
-                                logger=self.logger,
-                                progress_interval=progress_interval,
-                            )
-                            run_stats["clips_extracted"] += int(created)
-                            refresh_activity_panel()
-                            self.logger.info(
-                                "Extracted %s clips from %s (candidates=%s after_filter=%s)",
-                                created,
-                                video.name,
-                                len(merged_clips),
-                                len(final_clips),
-                            )
-                            progress.advance(activity_task)
-                            progress.update(activity_task, description="[green]Activity: Archiving source")
-                            progress.refresh()
-                            self._archive_video(video)
-                            self._apply_temp_cleanup_policy()
-                            progress.advance(activity_task)
-                        except Exception as exc:
-                            self.logger.exception("Error processing %s: %s", video.name, exc)
-                            self.console.print(f"[red]Failed processing {video.name}: {exc}[/red]")
-                        finally:
-                            status["progress_percent"] = round((index / len(videos)) * 100, 1)
-                            self._write_status(status)
-                            progress.update(ai_clipping_task, visible=False)
-                            progress.advance(videos_task)
-                            progress.update(
-                                videos_task,
-                                description=f"[cyan]Videos: {index}/{len(videos)}",
-                            )
+                            except Exception as exc:
+                                self.logger.exception("Error processing %s: %s", video.name, exc)
+                                self.console.print(f"[red]Failed processing {video.name}: {exc}[/red]")
+                                processed_video = True
+
+                        status["progress_percent"] = round((index / len(videos)) * 100, 1)
+                        self._write_status(status)
+                        progress.update(chunk_progress_task, visible=False)
+                        progress.update(ai_loop_task, visible=False)
+                        progress.advance(videos_task)
+                        progress.update(
+                            videos_task,
+                            description=f"[cyan]Videos: {index}/{len(videos)}",
+                        )
     
         finally:
             self._offload_runtime_resources(whisper_model=whisper_model)
@@ -997,7 +1428,8 @@ class ClippingEngine:
         summary.add_row("Candidates after merge", str(run_stats["merged_candidates"]))
         summary.add_row("Clips extracted", str(run_stats["clips_extracted"]))
         summary.add_row("Output folder", str(self.output_dir))
+        summary.add_row("Run ID", run_id)
         self.console.print(Panel(summary, title="Run Summary", border_style="green"))
         self.console.print("[bold green]Engine run completed.[/bold green]")
-        self.logger.info("Clipping engine run finished")
+        self.logger.info("Clipping engine run finished (run_id=%s)", run_id)
 

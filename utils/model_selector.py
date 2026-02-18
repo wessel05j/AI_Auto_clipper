@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import subprocess
@@ -259,4 +260,59 @@ def build_token_plan(
         "total_context_tokens": ctx_limit,
         "max_output_tokens": recommendation.max_output_tokens,
         "max_chunk_tokens": max_chunk_tokens,
+    }
+
+
+def build_runtime_token_plan(
+    model_name: str,
+    context_window: int,
+    max_output_tokens: int,
+    hardware_profile: Dict[str, Any],
+    intensity: str,
+) -> Dict[str, int]:
+    guessed_size = _guess_size_from_name(model_name) or 10.0
+    recommendation = ModelRecommendation(
+        model_name=model_name,
+        thinking=is_thinking_model(model_name),
+        source="runtime-update",
+        estimated_size_gb=float(guessed_size),
+        reason="Runtime token recalculation.",
+        context_window=int(max(1024, context_window)),
+        max_output_tokens=int(max(128, max_output_tokens)),
+    )
+    return build_token_plan(
+        recommendation=recommendation,
+        hardware_profile=hardware_profile,
+        intensity=intensity,
+    )
+
+
+def _estimate_tokens_rough(text: str) -> int:
+    payload = str(text or "")
+    return max(1, math.floor(len(payload) / 3.5))
+
+
+def prompt_aware_chunk_cap(
+    configured_chunk_tokens: int,
+    total_context_tokens: int,
+    max_output_tokens: int,
+    user_query: str,
+    system_prompt: str,
+    reserved_tokens: int = 700,
+) -> Dict[str, int]:
+    prompt_tokens = (
+        _estimate_tokens_rough(user_query)
+        + _estimate_tokens_rough(system_prompt)
+        + int(max(0, reserved_tokens))
+    )
+    available = int(total_context_tokens) - int(max_output_tokens) - int(prompt_tokens)
+    if available >= 900:
+        effective = min(int(configured_chunk_tokens), int(available))
+        effective = max(900, int(effective))
+    else:
+        effective = max(256, min(int(configured_chunk_tokens), int(max(256, available))))
+    return {
+        "effective_chunk_tokens": int(effective),
+        "prompt_tokens": int(prompt_tokens),
+        "available_context_tokens": int(available),
     }

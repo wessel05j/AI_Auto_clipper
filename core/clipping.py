@@ -6,7 +6,7 @@ import logging
 import re
 import warnings
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from moviepy.editor import VideoFileClip
 
@@ -153,9 +153,14 @@ def extract_clips(
     output_dir: Path,
     logger: logging.Logger,
     progress_interval: int = 5,
+    clip_name_indices: Optional[Sequence[int]] = None,
+    skip_existing: bool = False,
+    on_clip_done: Optional[Callable[[int, str, bool], None]] = None,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     clip_count = 0
+    if clip_name_indices is not None and len(clip_name_indices) != len(clips):
+        raise ValueError("clip_name_indices length must match clips length")
 
     with VideoFileClip(str(source_video)) as main_video:
         duration = float(main_video.duration or 0.0)
@@ -164,6 +169,7 @@ def extract_clips(
 
         base_name = sanitize_filename(source_video.stem)
         for index, clip in enumerate(clips, start=1):
+            clip_idx = int(clip_name_indices[index - 1]) if clip_name_indices is not None else index
             if len(clip) < 2:
                 continue
             start = max(0.0, float(clip[0]))
@@ -172,7 +178,11 @@ def extract_clips(
                 continue
 
             score = float(clip[2]) if len(clip) > 2 else 5.0
-            filename = output_dir / f"{base_name}_{index:03d}_r{int(round(score))}.mp4"
+            filename = output_dir / f"{base_name}_{clip_idx:03d}_r{int(round(score))}.mp4"
+            if skip_existing and filename.exists() and filename.stat().st_size > 0:
+                if on_clip_done is not None:
+                    on_clip_done(clip_idx, str(filename), False)
+                continue
             subclip = main_video.subclip(start, end)
             subclip.write_videofile(
                 str(filename),
@@ -184,6 +194,8 @@ def extract_clips(
                 logger=None,
             )
             clip_count += 1
+            if on_clip_done is not None:
+                on_clip_done(clip_idx, str(filename), True)
             if clip_count % max(1, progress_interval) == 0:
                 logger.info("Extracted %s clips from %s", clip_count, source_video.name)
 

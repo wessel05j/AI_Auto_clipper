@@ -29,6 +29,7 @@ from utils.model_selector import (
     is_required_thinking_model,
     model_billions,
     model_exists_locally,
+    prompt_aware_chunk_cap,
     pull_model,
     recommend_model,
     supports_think_low,
@@ -312,12 +313,19 @@ class SetupWizard:
             behavior="Primary clipping target instruction for content style/theme.",
             impact="This heavily drives what AI clipping searches for and which candidates get extracted.",
         )
-        user_query = Prompt.ask(
-            "What should AI clips focus on?",
-            default="Find high-retention, context-complete moments suitable for short-form content.",
+        default_user_query = str(
+            existing_config.get("clipping", {}).get(
+                "user_query",
+                config_template["clipping"]["user_query"],
+            )
+        ).strip() or config_template["clipping"]["user_query"]
+        self.console.print("[bold cyan]Opening editor for user query...[/bold cyan]")
+        user_query = edit_text_in_editor(
+            default_user_query,
+            filename_hint="ai_auto_clipper_user_query.txt",
         ).strip()
         if not user_query:
-            user_query = "Find high-retention, context-complete moments suitable for short-form content."
+            user_query = default_user_query
         self._show_setting_help(
             name="Merge Distance",
             behavior="Maximum time gap allowed when combining nearby candidate segments.",
@@ -420,8 +428,8 @@ class SetupWizard:
             behavior="Low-level instruction contract for model output format and clipping behavior.",
             impact="Bad edits can reduce relevance or break strict JSON output. Keep format constraints explicit.",
         )
-        if Confirm.ask("Edit system prompt now?", default=False):
-            system_prompt = self._read_system_prompt(current_prompt=system_prompt)
+        self.console.print("[bold cyan]Opening editor for system prompt...[/bold cyan]")
+        system_prompt = self._read_system_prompt(current_prompt=system_prompt)
 
         token_plan = build_token_plan(
             recommendation=selected_recommendation,
@@ -449,6 +457,16 @@ class SetupWizard:
         config["runtime"]["chunk_overlap_segments"] = max(0, int(chunk_overlap_segments))
         config["runtime"]["enable_bridge_chunks"] = bool(enable_bridge_chunks)
         config["runtime"]["bridge_chunk_edge_segments"] = max(1, int(bridge_chunk_edge_segments))
+        config["runtime"]["enable_temp_run_save"] = True
+        config["clipping"]["rerun_temp_files"] = bool(config["runtime"]["enable_temp_run_save"])
+        prompt_cap = prompt_aware_chunk_cap(
+            configured_chunk_tokens=int(config["runtime"]["max_chunk_tokens"]),
+            total_context_tokens=int(config["runtime"]["total_context_tokens"]),
+            max_output_tokens=int(config["ollama"]["max_output_tokens"]),
+            user_query=user_query,
+            system_prompt=system_prompt,
+        )
+        config["runtime"]["max_chunk_tokens"] = int(prompt_cap["effective_chunk_tokens"])
         config["maintenance"]["temp_cleanup"]["mode"] = cleanup_mode_choice
         config["maintenance"]["temp_cleanup"]["max_size_gb"] = max(1, int(cleanup_size_gb))
         config["maintenance"]["temp_cleanup"]["max_age_days"] = max(1, int(cleanup_age_days))

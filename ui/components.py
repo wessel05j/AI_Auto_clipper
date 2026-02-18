@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -88,26 +90,69 @@ def edit_text_in_editor(initial_text: str, filename_hint: str = "system_prompt.t
     Falls back to returning the original text when editor launch fails.
     """
     temp_dir = Path(tempfile.gettempdir())
-    temp_file = temp_dir / filename_hint
-    temp_file.write_text(initial_text, encoding="utf-8")
-
-    editor = os.environ.get("EDITOR", "").strip()
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=f"_{filename_hint}",
+        encoding="utf-8",
+        delete=False,
+        dir=str(temp_dir),
+    )
     try:
-        if os.name == "nt":
-            command = [editor, str(temp_file)] if editor else ["notepad", str(temp_file)]
-            subprocess.run(command, check=False)
-        else:
-            if editor:
-                subprocess.run([editor, str(temp_file)], check=False)
+        handle.write(initial_text)
+        handle.flush()
+        temp_file = Path(handle.name)
+    finally:
+        handle.close()
+
+    command: list[str] = []
+    visual = os.environ.get("VISUAL", "").strip()
+    editor = os.environ.get("EDITOR", "").strip()
+    for candidate in (visual, editor):
+        if not candidate:
+            continue
+        parts = shlex.split(candidate)
+        if not parts:
+            continue
+        command = [*parts, str(temp_file)]
+        break
+
+    if not command:
+        if shutil.which("code"):
+            command = ["code", "--wait", str(temp_file)]
+        elif os.name == "nt":
+            command = ["notepad", str(temp_file)]
+        elif sys.platform == "darwin":
+            if shutil.which("nano"):
+                command = ["nano", str(temp_file)]
+            elif shutil.which("vi"):
+                command = ["vi", str(temp_file)]
             else:
-                subprocess.run(["nano", str(temp_file)], check=False)
+                command = ["open", "-W", "-t", str(temp_file)]
+        else:
+            if shutil.which("nano"):
+                command = ["nano", str(temp_file)]
+            else:
+                command = ["vi", str(temp_file)]
+
+    try:
+        subprocess.run(command, check=False)
     except Exception:
+        try:
+            temp_file.unlink(missing_ok=True)
+        except Exception:
+            pass
         return initial_text
 
     try:
         edited = temp_file.read_text(encoding="utf-8")
     except Exception:
         return initial_text
+    finally:
+        try:
+            temp_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     cleaned = edited.strip()
     if not cleaned:
