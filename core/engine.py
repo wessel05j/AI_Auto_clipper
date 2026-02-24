@@ -180,9 +180,11 @@ class ClippingEngine:
         payload = f"{video.resolve()}|{int(stat.st_size)}|{int(stat.st_mtime)}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _video_checkpoint_path(self, video: Path) -> Path:
-        fingerprint = self._video_fingerprint(video)
-        return self.run_cache_dir / f"{fingerprint}.json"
+    def _video_checkpoint_path(self, video: Path, fingerprint: Optional[str] = None) -> Path:
+        resolved_fingerprint = str(fingerprint or "").strip()
+        if not resolved_fingerprint:
+            resolved_fingerprint = self._video_fingerprint(video)
+        return self.run_cache_dir / f"{resolved_fingerprint}.json"
 
     def _load_video_checkpoint(self, video: Path, signature: str) -> Dict[str, Any]:
         if not self._temp_run_save_enabled():
@@ -206,10 +208,20 @@ class ClippingEngine:
     def _save_video_checkpoint(self, video: Path, payload: Dict[str, Any]) -> None:
         if not self._temp_run_save_enabled():
             return
-        payload["video_fingerprint"] = self._video_fingerprint(video)
+        fingerprint = str(payload.get("video_fingerprint", "")).strip()
+        if not fingerprint:
+            try:
+                fingerprint = self._video_fingerprint(video)
+            except FileNotFoundError:
+                self.logger.warning(
+                    "Skipping checkpoint save because source file is missing and no prior fingerprint exists: %s",
+                    video,
+                )
+                return
+        payload["video_fingerprint"] = fingerprint
         payload["config_signature"] = payload.get("config_signature") or self._current_resume_signature()
         payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        save_json_file(self._video_checkpoint_path(video), payload)
+        save_json_file(self._video_checkpoint_path(video, fingerprint=fingerprint), payload)
 
     def _clear_video_checkpoint(self, video: Path) -> None:
         try:
