@@ -70,29 +70,22 @@ def _pick_progressive(formats: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]
 def choose_download_format(extracted_info: Dict[str, Any]) -> FormatDecision:
     """
     Select best format with this fallback chain:
-    1) 2K-ish video (1081-1600p)
-    2) best 1080p video
-    3) best progressive (audio + video)
-    4) generic yt-dlp bestvideo+bestaudio fallback
+    1) Best available video-only stream (highest resolution/bitrate, no upper cap)
+    2) best progressive (audio + video)
+    3) generic yt-dlp bestvideo+bestaudio fallback
     """
     formats = extracted_info.get("formats") or []
     if not isinstance(formats, list) or not formats:
         return FormatDecision("bestvideo+bestaudio/best", "generic-fallback")
 
-    two_k = _pick_video_stream(formats, min_height=1081, max_height=1600)
-    if two_k and two_k.get("format_id"):
-        fmt_id = str(two_k["format_id"])
+    best_video = _pick_video_stream(formats, min_height=0, max_height=99999)
+    if best_video and best_video.get("format_id"):
+        fmt_id = str(best_video["format_id"])
+        height = _to_int(best_video.get("height")) or 0
+        strategy = f"{height}p-video-plus-audio" if height else "best-video-plus-audio"
         return FormatDecision(
             format_string=f"{fmt_id}+bestaudio[acodec!=none]/{fmt_id}+bestaudio/{fmt_id}/best",
-            strategy="2k-video-plus-audio",
-        )
-
-    full_hd = _pick_video_stream(formats, min_height=1080, max_height=1080)
-    if full_hd and full_hd.get("format_id"):
-        fmt_id = str(full_hd["format_id"])
-        return FormatDecision(
-            format_string=f"{fmt_id}+bestaudio[acodec!=none]/{fmt_id}+bestaudio/{fmt_id}/best",
-            strategy="1080p-video-plus-audio",
+            strategy=strategy,
         )
 
     progressive = _pick_progressive(formats)
