@@ -77,7 +77,10 @@ def transcribe_video(
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
         with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-            result = whisper_model.transcribe(str(video_path), verbose=False, word_timestamps=True)
+            try:
+                result = whisper_model.transcribe(str(video_path), verbose=False, word_timestamps=True)
+            except TypeError:
+                result = whisper_model.transcribe(str(video_path), verbose=False)
 
     if logger is not None:
         for warning in captured_warnings:
@@ -305,20 +308,140 @@ def _probe_duration_seconds(path: Path, ffprobe_bin: str, *, strict: bool = Fals
     return None
 
 
-def _validate_media_output(path: Path, ffprobe_bin: str) -> tuple[bool, str]:
+def _duration_tolerance_seconds(expected_duration: float) -> float:
+    return max(0.35, min(1.0, max(0.0, float(expected_duration)) * 0.05))
+
+
+def _probe_previous_keyframe_time(
+    path: Path,
+    ffprobe_bin: str,
+    timestamp: float,
+    *,
+    search_window_seconds: float = 20.0,
+) -> Optional[float]:
+    window_start = max(0.0, float(timestamp) - max(1.0, float(search_window_seconds)))
+    interval_length = max(1.0, float(timestamp) - window_start + 1.0)
+    command = [
+        ffprobe_bin,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-skip_frame",
+        "nokey",
+        "-show_frames",
+        "-show_entries",
+        "frame=pts_time",
+        "-print_format",
+        "json",
+        "-read_intervals",
+        f"{_format_ffmpeg_time(window_start)}%+{_format_ffmpeg_time(interval_length)}",
+        str(path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is required for clip validation") from exc
+
+    if completed.returncode != 0:
+        return None
+
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+
+    frames = payload.get("frames", [])
+    if not isinstance(frames, list):
+        return None
+
+    latest_keyframe: Optional[float] = None
+    target_time = float(timestamp)
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        try:
+            pts_time = float(frame.get("pts_time"))
+        except (TypeError, ValueError):
+            continue
+        if pts_time > target_time + 1e-6:
+            continue
+        if latest_keyframe is None or pts_time > latest_keyframe:
+            latest_keyframe = pts_time
+    return latest_keyframe
+
+
+def _copy_trim_start_is_accurate(
+    requested_start: float,
+    previous_keyframe_time: Optional[float],
+    *,
+    tolerance_seconds: float = 0.25,
+) -> tuple[bool, str]:
+    start_time = max(0.0, float(requested_start))
+    tolerance = max(0.05, float(tolerance_seconds))
+    if start_time <= tolerance:
+        return True, ""
+    if previous_keyframe_time is None:
+        return False, "could not verify a nearby source keyframe"
+
+    drift = max(0.0, start_time - float(previous_keyframe_time))
+    if drift <= tolerance:
+        return True, ""
+    return False, f"nearest source keyframe is {drift:.3f}s before requested start"
+
+
+def _verify_copy_trim_accuracy(
+    source_video: Path,
+    ffprobe_bin: str,
+    *,
+    requested_start: float,
+    requested_duration: float,
+) -> tuple[bool, str]:
+    keyframe_time = _probe_previous_keyframe_time(
+        source_video,
+        ffprobe_bin,
+        max(0.0, float(requested_start)),
+    )
+    return _copy_trim_start_is_accurate(
+        requested_start,
+        keyframe_time,
+        tolerance_seconds=min(0.25, _duration_tolerance_seconds(requested_duration)),
+    )
+
+
+def _validate_media_output(
+    path: Path,
+    ffprobe_bin: str,
+    *,
+    expected_duration: Optional[float] = None,
+) -> tuple[bool, str, Optional[float]]:
     if not path.exists():
-        return False, "file was not created"
+        return False, "file was not created", None
     try:
         size = path.stat().st_size
     except OSError as exc:
-        return False, f"unable to stat file: {exc}"
+        return False, f"unable to stat file: {exc}", None
     if size <= 0:
-        return False, "file is empty"
+        return False, "file is empty", None
 
     duration = _probe_duration_seconds(path, ffprobe_bin, strict=False)
     if duration is None or duration <= 0:
-        return False, "ffprobe reported invalid duration"
-    return True, ""
+        return False, "ffprobe reported invalid duration", duration
+    if expected_duration is not None:
+        tolerance = _duration_tolerance_seconds(expected_duration)
+        if abs(duration - float(expected_duration)) > tolerance:
+            return (
+                False,
+                f"duration mismatch (expected ~{float(expected_duration):.3f}s, got {duration:.3f}s)",
+                duration,
+            )
+    return True, "", duration
 
 
 def _run_ffmpeg_command(command: Sequence[str]) -> tuple[bool, str]:
@@ -367,11 +490,64 @@ def _copy_trim_command(ffmpeg_bin: str, source_video: Path, output_path: Path, s
     ]
 
 
-def _find_existing_output(candidates: Sequence[Path], ffprobe_bin: str, logger: logging.Logger) -> Optional[Path]:
+def _accurate_trim_command(
+    ffmpeg_bin: str,
+    source_video: Path,
+    output_path: Path,
+    start: float,
+    duration: float,
+) -> List[str]:
+    return [
+        ffmpeg_bin,
+        "-y",
+        "-v",
+        "error",
+        "-nostdin",
+        "-i",
+        str(source_video),
+        "-ss",
+        _format_ffmpeg_time(start),
+        "-t",
+        _format_ffmpeg_time(duration),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a?",
+        "-sn",
+        "-dn",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+
+def _find_existing_output(
+    candidates: Sequence[Path],
+    ffprobe_bin: str,
+    logger: logging.Logger,
+    *,
+    expected_duration: Optional[float] = None,
+) -> Optional[Path]:
     for candidate in candidates:
         if not candidate.exists():
             continue
-        valid, reason = _validate_media_output(candidate, ffprobe_bin)
+        valid, reason, _ = _validate_media_output(
+            candidate,
+            ffprobe_bin,
+            expected_duration=expected_duration,
+        )
         if valid:
             return candidate
         logger.warning("Removing invalid existing clip %s: %s", candidate.name, reason)
@@ -399,8 +575,32 @@ def _extract_clip_stream_copy(
     for attempt_index, (output_path, command) in enumerate(attempts, start=1):
         _delete_partial_output(output_path)
         succeeded, details = _run_ffmpeg_command(command)
-        valid, reason = _validate_media_output(output_path, ffprobe_bin)
+        valid, reason, _ = _validate_media_output(
+            output_path,
+            ffprobe_bin,
+            expected_duration=duration,
+        )
         if valid:
+            accurate, accuracy_reason = _verify_copy_trim_accuracy(
+                source_video,
+                ffprobe_bin,
+                requested_start=start,
+                requested_duration=duration,
+            )
+            if not accurate:
+                _delete_partial_output(output_path)
+                errors.append(f"{output_path.suffix.lower()} copy trim failed: {accuracy_reason}")
+                logger.warning(
+                    "Stream-copy trim for %s was rejected because cut accuracy could not be guaranteed. Details: %s",
+                    source_video.name,
+                    accuracy_reason,
+                )
+                if attempt_index == 1:
+                    logger.warning(
+                        "MP4 stream-copy trim rejected for %s; retrying Matroska container before re-encode.",
+                        source_video.name,
+                    )
+                continue
             if not succeeded:
                 logger.warning(
                     "FFmpeg reported errors while trimming %s to %s, but the output passed validation. Details: %s",
@@ -427,6 +627,26 @@ def _extract_clip_stream_copy(
                 _summarize_error_details(details),
             )
 
+    reencode_output = mp4_output
+    _delete_partial_output(reencode_output)
+    logger.warning(
+        "Falling back to accurate re-encode trim for %s because stream-copy could not guarantee a precise cut.",
+        source_video.name,
+    )
+    succeeded, details = _run_ffmpeg_command(
+        _accurate_trim_command(ffmpeg_bin, source_video, reencode_output, start, duration)
+    )
+    valid, reason, _ = _validate_media_output(
+        reencode_output,
+        ffprobe_bin,
+        expected_duration=duration,
+    )
+    if succeeded and valid:
+        logger.info("Accurate re-encode trim succeeded for %s (%s)", source_video.name, reencode_output.name)
+        return reencode_output
+
+    _delete_partial_output(reencode_output)
+    errors.append(f"accurate re-encode trim failed: {reason or details}")
     raise RuntimeError("; ".join(errors))
 
 
@@ -467,7 +687,12 @@ def extract_clips(
         mkv_output = output_dir / f"{clip_stem}.mkv"
 
         if skip_existing:
-            existing_output = _find_existing_output((mp4_output, mkv_output), ffprobe_bin, logger)
+            existing_output = _find_existing_output(
+                (mp4_output, mkv_output),
+                ffprobe_bin,
+                logger,
+                expected_duration=end - start,
+            )
             if existing_output is not None:
                 if on_clip_done is not None:
                     on_clip_done(clip_idx, str(existing_output), False)
