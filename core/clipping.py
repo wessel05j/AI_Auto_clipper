@@ -15,6 +15,34 @@ from typing import Callable, List, Optional, Sequence
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 
 
+def _extract_timed_words(segment: object) -> List[List[object]]:
+    if not isinstance(segment, dict):
+        return []
+
+    raw_words = segment.get("words", [])
+    if not isinstance(raw_words, list):
+        return []
+
+    normalized: List[List[object]] = []
+    for word in raw_words:
+        if not isinstance(word, dict):
+            continue
+        try:
+            start = float(word.get("start"))
+            end = float(word.get("end"))
+        except (TypeError, ValueError):
+            continue
+
+        text = str(word.get("word", ""))
+        if not text:
+            continue
+        if end < start:
+            end = start
+        normalized.append([start, end, text])
+
+    return normalized
+
+
 def scan_input_videos(input_dir: Path) -> List[Path]:
     videos: List[Path] = []
     if not input_dir.exists():
@@ -42,14 +70,14 @@ def transcribe_video(
 ) -> List[List[object]]:
     """
     Transcribe and merge short pause segments into sentence-level transcript chunks.
-    Output format: [[start, end, text], ...]
+    Output format: [[start, end, text], ...] or [[start, end, text, [[w_start, w_end, word], ...]], ...]
     """
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
         with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-            result = whisper_model.transcribe(str(video_path), verbose=False)
+            result = whisper_model.transcribe(str(video_path), verbose=False, word_timestamps=True)
 
     if logger is not None:
         for warning in captured_warnings:
@@ -74,23 +102,55 @@ def transcribe_video(
             continue
         start = float(segment.get("start", 0.0))
         end = float(segment.get("end", start))
+        words = _extract_timed_words(segment)
 
         if current is None:
-            current = {"start": start, "end": end, "text": text}
+            current = {
+                "start": start,
+                "end": end,
+                "text": text,
+                "words": list(words),
+                "words_complete": bool(words),
+            }
             continue
 
         pause = start - float(current["end"])
         has_sentence_end = bool(strong_end.search(str(current["text"])))
 
         if has_sentence_end or pause >= min_pause:
-            merged.append([float(current["start"]), float(current["end"]), str(current["text"]).strip()])
-            current = {"start": start, "end": end, "text": text}
+            item = [
+                float(current["start"]),
+                float(current["end"]),
+                str(current["text"]).strip(),
+            ]
+            if bool(current.get("words_complete")) and current.get("words"):
+                item.append(list(current["words"]))
+            merged.append(item)
+            current = {
+                "start": start,
+                "end": end,
+                "text": text,
+                "words": list(words),
+                "words_complete": bool(words),
+            }
         else:
             current["end"] = end
             current["text"] = f"{current['text']} {text}".strip()
+            if bool(current.get("words_complete")) and words:
+                current["words"].extend(words)
+            else:
+                current["words_complete"] = False
+                current["words"] = []
 
     if current:
-        merged.append([float(current["start"]), float(current["end"]), str(current["text"]).strip()])
+        item = [
+            float(current["start"]),
+            float(current["end"]),
+            str(current["text"]).strip(),
+        ]
+        if bool(current.get("words_complete")) and current.get("words"):
+            item.append(list(current["words"]))
+        merged.append(item)
 
     return merged
 

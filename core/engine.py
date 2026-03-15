@@ -85,6 +85,8 @@ class _SettingsChangedError(RuntimeError):
 class ClippingEngine:
     """Main runtime engine that orchestrates download, transcription, AI scan, and clip extraction."""
 
+    TRANSCRIPT_CHECKPOINT_VERSION = 2
+
     def __init__(self, base_dir: Path, config: Dict[str, Any], logger: logging.Logger, console: Console) -> None:
         self.base_dir = base_dir
         self.config = config
@@ -117,6 +119,30 @@ class ClippingEngine:
     def _temp_run_save_enabled(self) -> bool:
         runtime_cfg = self.config.get("runtime", {})
         return bool(runtime_cfg.get("enable_temp_run_save", True))
+
+    @classmethod
+    def _current_transcript_meta(cls) -> Dict[str, Any]:
+        return {
+            "schema_version": int(cls.TRANSCRIPT_CHECKPOINT_VERSION),
+            "word_timestamps": True,
+        }
+
+    @classmethod
+    def _transcript_checkpoint_compatible(cls, payload: Dict[str, Any]) -> bool:
+        if "transcript" not in payload:
+            return True
+
+        meta = payload.get("transcript_meta")
+        if not isinstance(meta, dict):
+            return False
+
+        try:
+            schema_version = int(meta.get("schema_version", 0))
+        except (TypeError, ValueError):
+            return False
+        if schema_version < cls.TRANSCRIPT_CHECKPOINT_VERSION:
+            return False
+        return bool(meta.get("word_timestamps"))
 
     @staticmethod
     def _resume_signature_from_config(config: Dict[str, Any]) -> str:
@@ -202,6 +228,12 @@ class ClippingEngine:
         if str(payload.get("video_fingerprint", "")) != expected_fingerprint:
             return {}
         if str(payload.get("config_signature", "")) != signature:
+            return {}
+        if not self._transcript_checkpoint_compatible(payload):
+            self.logger.info(
+                "Ignoring outdated transcript checkpoint for %s because it lacks word timestamp metadata.",
+                video.name,
+            )
             return {}
         return payload
 
@@ -1131,6 +1163,7 @@ class ClippingEngine:
                                         logger=self.logger,
                                     )
                                     checkpoint["transcript"] = transcript
+                                    checkpoint["transcript_meta"] = self._current_transcript_meta()
                                     self._save_video_checkpoint(video, checkpoint)
                                 else:
                                     self.logger.info("Using saved transcript checkpoint for %s", video.name)

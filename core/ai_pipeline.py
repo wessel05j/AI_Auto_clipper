@@ -52,6 +52,115 @@ def estimate_tokens(text: str) -> int:
     return max(1, math.floor(len(text) / 3.5))
 
 
+def _segment_tokens(start: float, end: float, text: str) -> int:
+    return estimate_tokens(f"{start} {end} {text}")
+
+
+def _normalize_timed_words(segment: Sequence[Any]) -> List[List[Any]]:
+    if len(segment) < 4 or not isinstance(segment[3], list):
+        return []
+
+    normalized: List[List[Any]] = []
+    for word in segment[3]:
+        if not isinstance(word, (list, tuple)) or len(word) < 3:
+            continue
+        try:
+            start = float(word[0])
+            end = float(word[1])
+        except (TypeError, ValueError):
+            continue
+        text = str(word[2])
+        if not text:
+            continue
+        if end < start:
+            end = start
+        normalized.append([start, end, text])
+    return normalized
+
+
+def _words_to_segment(words: Sequence[Sequence[Any]]) -> List[Any]:
+    text = "".join(str(word[2]) for word in words).strip()
+    if not text:
+        text = " ".join(str(word[2]).strip() for word in words if str(word[2]).strip())
+    start = float(words[0][0])
+    end = float(words[-1][1])
+    if end < start:
+        end = start
+    return [start, end, text]
+
+
+def _split_segment_with_timed_words(segment: Sequence[Any], budget: int) -> List[List[Any]]:
+    words = _normalize_timed_words(segment)
+    if not words:
+        return []
+
+    windows: List[List[Any]] = []
+    current_words: List[List[Any]] = []
+    for word in words:
+        candidate_words = current_words + [word]
+        candidate_segment = _words_to_segment(candidate_words)
+        candidate_tokens = _segment_tokens(
+            float(candidate_segment[0]),
+            float(candidate_segment[1]),
+            str(candidate_segment[2]),
+        )
+        if candidate_tokens > budget and current_words:
+            windows.append(_words_to_segment(current_words))
+            current_words = [word]
+            continue
+        current_words = candidate_words
+
+    if current_words:
+        windows.append(_words_to_segment(current_words))
+    return windows
+
+
+def _split_segment_with_estimated_ranges(
+    start: float,
+    end: float,
+    text: str,
+    budget: int,
+) -> List[List[Any]]:
+    words = text.split()
+    if not words:
+        return []
+
+    total_words = len(words)
+    duration = max(0.0, end - start)
+    windows: List[List[Any]] = []
+    current_words: List[str] = []
+    current_start_index = 0
+
+    def flush_window(start_index: int, window_words: List[str]) -> None:
+        if not window_words:
+            return
+        word_count = len(window_words)
+        window_start = start + (duration * (start_index / total_words))
+        window_end = start + (duration * ((start_index + word_count) / total_words))
+        if window_end < window_start:
+            window_end = window_start
+        windows.append([window_start, window_end, " ".join(window_words)])
+
+    for index, word in enumerate(words):
+        candidate_words = current_words + [word]
+        candidate_text = " ".join(candidate_words)
+        candidate_start = start + (duration * (current_start_index / total_words))
+        candidate_end = start + (duration * ((current_start_index + len(candidate_words)) / total_words))
+        candidate_tokens = _segment_tokens(candidate_start, candidate_end, candidate_text)
+        if candidate_tokens > budget and current_words:
+            flush_window(current_start_index, current_words)
+            current_words = [word]
+            current_start_index = index
+            continue
+
+        if not current_words:
+            current_start_index = index
+        current_words = candidate_words
+
+    flush_window(current_start_index, current_words)
+    return windows
+
+
 def chunk_transcript(
     transcript: Sequence[Sequence[Any]],
     max_tokens: int,
@@ -75,19 +184,18 @@ def chunk_transcript(
         seg_tokens = estimate_tokens(serialized)
 
         if seg_tokens > budget:
-            words = text.split()
-            if not words:
+            mini_segments = _split_segment_with_timed_words(segment, budget)
+            if not mini_segments:
+                mini_segments = _split_segment_with_estimated_ranges(start, end, text, budget)
+            if not mini_segments:
                 continue
-            words_per_window = max(8, int(budget * 0.8))
-            for index in range(0, len(words), words_per_window):
-                mini_words = words[index : index + words_per_window]
-                mini_text = " ".join(mini_words)
-                mini_tokens = estimate_tokens(mini_text)
+            for mini_start, mini_end, mini_text in mini_segments:
+                mini_tokens = _segment_tokens(float(mini_start), float(mini_end), str(mini_text))
                 if current_tokens + mini_tokens > budget and current_chunk:
                     chunks.append(current_chunk)
                     current_chunk = []
                     current_tokens = 0
-                current_chunk.append([start, end, mini_text])
+                current_chunk.append([float(mini_start), float(mini_end), str(mini_text)])
                 current_tokens += mini_tokens
             continue
 
