@@ -21,8 +21,7 @@ MIN_THINKING_B = 8.0
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert transcript clip selector for the users request.\n"
     "Input:\n"
-    "- JSON transcript: [[start, end, \"text\"], ...] with start/end in seconds.\n"
-    "- Optional pause boundary hints: [[segment_start, segment_end, pause_before_seconds, pause_after_seconds], ...].\n\n"
+    "- JSON transcript: [[start, end, \"text\"], ...] with start/end in seconds.\n\n"
     "OUTPUT ONLY (STRICT):\n"
     "- ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]\n"
     "- The third element is how well the clip matches the user query "
@@ -33,12 +32,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Each clip must be a complete thought: clear beginning, middle, and end.\n"
     "- Prefer natural pauses and paragraph boundaries for cut points.\n"
     "- Prefer context-rich clips that clearly match the user query.\n"
-    "- Pause boundary hints are optional boundary cues only; do not force a clip because a pause exists.\n"
     "- If no segments match the query, return an empty list: [].\n"
 )
 
 DEFAULT_USER_QUERY = (
-    "Identify uplifting, encouraging, and inspiring moments where the speaker is expressing a complete motivational idea or directly addressing the audience. Prefer clips that usually land around 35 to 120 seconds and feel complete, but allow shorter clips when they are unusually strong and fully coherent. Avoid intro/outro filler, fragmented thoughts, training grunts, flexing-only moments, and sections that are mostly activity without meaningful spoken content. If the opening seconds are unclear or just setup, start after the intro."
+    "Find the most engaging and context-complete moments that work as viral short clips."
 )
 
 
@@ -124,7 +122,7 @@ def build_default_config() -> Dict[str, Any]:
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
             "merge_distance_seconds": 20,
             "ai_loops": 2,
-            "exact_trim_reencode": True,
+            "exact_trim_reencode": False,
             "enable_youtube_downloads": True,
             "youtube_links": [],
             "channels": [],
@@ -299,7 +297,7 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     if not isinstance(config["clipping"].get("channels", []), list):
         errors.append("clipping.channels must be a list")
     if "exact_trim_reencode" not in config["clipping"]:
-        config["clipping"]["exact_trim_reencode"] = True
+        config["clipping"]["exact_trim_reencode"] = False
     if not isinstance(config["clipping"].get("exact_trim_reencode", False), bool):
         errors.append("clipping.exact_trim_reencode must be true/false")
     if "enable_youtube_downloads" not in config["clipping"]:
