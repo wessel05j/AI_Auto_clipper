@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 
 
@@ -216,7 +217,6 @@ def _probe_duration_seconds(path: Path, ffprobe_bin: str, *, strict: bool = Fals
         return None
 
     duration_candidates: List[float] = []
-
     format_info = payload.get("format", {})
     if isinstance(format_info, dict):
         try:
@@ -307,54 +307,7 @@ def _copy_trim_command(ffmpeg_bin: str, source_video: Path, output_path: Path, s
     ]
 
 
-def _reencode_trim_command(ffmpeg_bin: str, source_video: Path, output_path: Path, start: float, duration: float) -> List[str]:
-    return [
-        ffmpeg_bin,
-        "-y",
-        "-v",
-        "error",
-        "-nostdin",
-        "-i",
-        str(source_video),
-        "-ss",
-        _format_ffmpeg_time(start),
-        "-t",
-        _format_ffmpeg_time(duration),
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a?",
-        "-sn",
-        "-dn",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "18",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-avoid_negative_ts",
-        "make_zero",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
-
-
-def _existing_output_candidates(mp4_output: Path, mkv_output: Path, exact_trim_reencode: bool) -> List[Path]:
-    if exact_trim_reencode:
-        return [mp4_output]
-    return [mp4_output, mkv_output]
-
-
-def _find_existing_output(
-    candidates: Sequence[Path],
-    ffprobe_bin: str,
-    logger: logging.Logger,
-) -> Optional[Path]:
+def _find_existing_output(candidates: Sequence[Path], ffprobe_bin: str, logger: logging.Logger) -> Optional[Path]:
     for candidate in candidates:
         if not candidate.exists():
             continue
@@ -378,7 +331,6 @@ def _extract_clip_stream_copy(
     logger: logging.Logger,
 ) -> Path:
     errors: List[str] = []
-
     attempts = [
         (mp4_output, _copy_trim_command(ffmpeg_bin, source_video, mp4_output, start, duration)),
         (mkv_output, _copy_trim_command(ffmpeg_bin, source_video, mkv_output, start, duration)),
@@ -408,7 +360,6 @@ def _extract_clip_stream_copy(
 
         _delete_partial_output(output_path)
         errors.append(f"{output_path.suffix.lower()} copy trim failed: {details}")
-
         if attempt_index == 1:
             logger.warning(
                 "MP4 stream-copy trim failed for %s; retrying Matroska container. Details: %s",
@@ -417,37 +368,6 @@ def _extract_clip_stream_copy(
             )
 
     raise RuntimeError("; ".join(errors))
-
-
-def _extract_clip_reencode(
-    *,
-    ffmpeg_bin: str,
-    ffprobe_bin: str,
-    source_video: Path,
-    output_path: Path,
-    start: float,
-    duration: float,
-    logger: logging.Logger,
-) -> Path:
-    _delete_partial_output(output_path)
-    succeeded, details = _run_ffmpeg_command(
-        _reencode_trim_command(ffmpeg_bin, source_video, output_path, start, duration)
-    )
-    valid, reason = _validate_media_output(output_path, ffprobe_bin)
-    if valid:
-        if not succeeded:
-            logger.warning(
-                "FFmpeg reported errors while exact-trimming %s to %s, but the output passed validation. Details: %s",
-                source_video.name,
-                output_path.name,
-                _summarize_error_details(details),
-            )
-        return output_path
-
-    _delete_partial_output(output_path)
-    if not succeeded:
-        raise RuntimeError(details)
-    raise RuntimeError(reason)
 
 
 def extract_clips(
@@ -459,7 +379,6 @@ def extract_clips(
     clip_name_indices: Optional[Sequence[int]] = None,
     skip_existing: bool = False,
     on_clip_done: Optional[Callable[[int, str, bool], None]] = None,
-    exact_trim_reencode: bool = False,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     clip_count = 0
@@ -488,39 +407,22 @@ def extract_clips(
         mkv_output = output_dir / f"{clip_stem}.mkv"
 
         if skip_existing:
-            existing_output = _find_existing_output(
-                _existing_output_candidates(mp4_output, mkv_output, exact_trim_reencode),
-                ffprobe_bin,
-                logger,
-            )
+            existing_output = _find_existing_output((mp4_output, mkv_output), ffprobe_bin, logger)
             if existing_output is not None:
                 if on_clip_done is not None:
                     on_clip_done(clip_idx, str(existing_output), False)
                 continue
 
-        duration = end - start
-        if exact_trim_reencode:
-            created_output = _extract_clip_reencode(
-                ffmpeg_bin=ffmpeg_bin,
-                ffprobe_bin=ffprobe_bin,
-                source_video=source_video,
-                output_path=mp4_output,
-                start=start,
-                duration=duration,
-                logger=logger,
-            )
-        else:
-            created_output = _extract_clip_stream_copy(
-                ffmpeg_bin=ffmpeg_bin,
-                ffprobe_bin=ffprobe_bin,
-                source_video=source_video,
-                mp4_output=mp4_output,
-                mkv_output=mkv_output,
-                start=start,
-                duration=duration,
-                logger=logger,
-            )
-
+        created_output = _extract_clip_stream_copy(
+            ffmpeg_bin=ffmpeg_bin,
+            ffprobe_bin=ffprobe_bin,
+            source_video=source_video,
+            mp4_output=mp4_output,
+            mkv_output=mkv_output,
+            start=start,
+            duration=end - start,
+            logger=logger,
+        )
         clip_count += 1
         if on_clip_done is not None:
             on_clip_done(clip_idx, str(created_output), True)

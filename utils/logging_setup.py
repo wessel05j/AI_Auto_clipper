@@ -41,5 +41,6 @@ def setup_logging(base_dir: Path, log_level: str = "INFO", dev_mode: bool = Fals
 
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("yt_dlp").setLevel(logging.WARNING)
+    logging.getLogger("moviepy").setLevel(logging.WARNING)
     logging.getLogger("py.warnings").setLevel(logging.ERROR)
     return logging.getLogger("ai_auto_clipper")

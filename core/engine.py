@@ -132,7 +132,6 @@ class ClippingEngine:
                 "merge_distance_seconds": int(clipping.get("merge_distance_seconds", 20)),
                 "ai_loops": int(clipping.get("ai_loops", 2)),
                 "clip_progress_interval": int(clipping.get("clip_progress_interval", 5)),
-                "exact_trim_reencode": bool(clipping.get("exact_trim_reencode", False)),
             },
             "runtime": {
                 "total_context_tokens": int(runtime_cfg.get("total_context_tokens", 8192)),
@@ -1380,9 +1379,6 @@ class ClippingEngine:
                                         clip_name_indices=remaining_indices,
                                         skip_existing=True,
                                         on_clip_done=on_clip_done,
-                                        exact_trim_reencode=bool(
-                                            self.config.get("clipping", {}).get("exact_trim_reencode", False)
-                                        ),
                                     )
                                 self.logger.info(
                                     "Extracted %s clips from %s (candidates=%s after_filter=%s)",

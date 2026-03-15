@@ -1,5 +1,6 @@
 # Torch is intentionally installed by setup_env.py (CPU/CUDA aware).
 openai-whisper
+moviepy==1.0.3
 yt_dlp
 requests
 tiktoken
