@@ -122,6 +122,7 @@ def build_default_config() -> Dict[str, Any]:
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
             "merge_distance_seconds": 20,
             "ai_loops": 2,
+            "exact_trim_reencode": False,
             "enable_youtube_downloads": True,
             "youtube_links": [],
             "channels": [],
@@ -295,6 +296,10 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
         errors.append("clipping.youtube_links must be a list")
     if not isinstance(config["clipping"].get("channels", []), list):
         errors.append("clipping.channels must be a list")
+    if "exact_trim_reencode" not in config["clipping"]:
+        config["clipping"]["exact_trim_reencode"] = False
+    if not isinstance(config["clipping"].get("exact_trim_reencode", False), bool):
+        errors.append("clipping.exact_trim_reencode must be true/false")
     if "enable_youtube_downloads" not in config["clipping"]:
         config["clipping"]["enable_youtube_downloads"] = True
     if not isinstance(config["clipping"].get("enable_youtube_downloads", True), bool):
