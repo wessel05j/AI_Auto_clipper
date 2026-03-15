@@ -30,7 +30,7 @@ from rich.table import Table
 from rich.text import Text
 import requests
 
-from core.ai_pipeline import AIPipeline, chunk_transcript, estimate_tokens
+from core.ai_pipeline import AIPipeline, build_chunk_pause_hints, chunk_transcript, estimate_tokens
 from core.clipping import (
     extract_clips,
     merge_segments,
@@ -1149,7 +1149,7 @@ class ClippingEngine:
                                 chunking_state = checkpoint.get("chunking")
                                 chunking_meta = checkpoint.get("chunking_meta", {})
                                 expected_meta = {
-                                    "chunk_schema_version": 2,
+                                    "chunk_schema_version": 3,
                                     "max_chunk_tokens": int(max_chunk_tokens),
                                     "chunk_overlap_segments": int(max(0, chunk_overlap_segments)),
                                     "enable_bridge_chunks": bool(enable_bridge_chunks),
@@ -1160,9 +1160,11 @@ class ClippingEngine:
                                     and chunking_meta == expected_meta
                                     and isinstance(chunking_state.get("base_chunks"), list)
                                     and isinstance(chunking_state.get("chunks"), list)
+                                    and isinstance(chunking_state.get("chunk_pause_hints"), list)
                                 ):
                                     base_chunks = chunking_state.get("base_chunks", [])
                                     chunks = chunking_state.get("chunks", [])
+                                    chunk_pause_hints = chunking_state.get("chunk_pause_hints", [])
                                     bridge_count = int(chunking_state.get("bridge_count", 0))
                                     self.logger.info("Using saved chunk checkpoint for %s", video.name)
                                 else:
@@ -1178,9 +1180,21 @@ class ClippingEngine:
                                         )
                                     else:
                                         chunks, bridge_count = base_chunks, 0
+                                    chunk_pause_hints = build_chunk_pause_hints(chunks=chunks, transcript=transcript)
                                     checkpoint["chunking"] = {
                                         "base_chunks": base_chunks,
                                         "chunks": chunks,
+                                        "chunk_pause_hints": chunk_pause_hints,
+                                        "bridge_count": int(bridge_count),
+                                    }
+                                    checkpoint["chunking_meta"] = expected_meta
+                                    self._save_video_checkpoint(video, checkpoint)
+                                if len(chunk_pause_hints) != len(chunks):
+                                    chunk_pause_hints = build_chunk_pause_hints(chunks=chunks, transcript=transcript)
+                                    checkpoint["chunking"] = {
+                                        "base_chunks": base_chunks,
+                                        "chunks": chunks,
+                                        "chunk_pause_hints": chunk_pause_hints,
                                         "bridge_count": int(bridge_count),
                                     }
                                     checkpoint["chunking_meta"] = expected_meta
@@ -1237,6 +1251,11 @@ class ClippingEngine:
                                     if not isinstance(loop_outputs, dict):
                                         loop_outputs = {}
                                     combined: List[List[float]] = []
+                                    pause_hints = (
+                                        chunk_pause_hints[chunk_index - 1]
+                                        if (chunk_index - 1) < len(chunk_pause_hints)
+                                        else []
+                                    )
 
                                     for loop_index in range(1, loop_count + 1):
                                         self._assert_settings_unchanged(config_signature)
@@ -1255,6 +1274,7 @@ class ClippingEngine:
                                             output = ai_pipeline.scan_chunk_with_retries(
                                                 chunk=chunk,
                                                 user_query=effective_query,
+                                                pause_hints=pause_hints,
                                             )
                                             loop_outputs[str(loop_index)] = output
                                             chunk_outputs[str(chunk_index)] = loop_outputs

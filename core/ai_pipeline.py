@@ -32,7 +32,7 @@ RELEVANCE_GUARDRAIL = (
     "- Reject clips that are mostly music, intro/outro filler, grunts, or non-verbal effort sounds.\n"
     "- Respect explicit duration constraints written in the user query.\n"
     "- Prefer coherent complete thoughts with natural start/end boundaries.\n"
-    "- Use pause/duration cues to favor natural starts and endings around silence or speaker resets.\n"
+    "- Use optional pause boundary hints to improve clip boundaries, but do not force a clip just because of a pause.\n"
     "- For 'at least X seconds', treat X as a minimum floor, not an exact target."
 )
 
@@ -61,24 +61,10 @@ def _gap_seconds(previous_end: Any, next_start: Any) -> float:
     return max(0.0, gap)
 
 
-def _build_prompt_segment(
-    start: Any,
-    end: Any,
-    text: str,
-    pause_before_seconds: float,
-    pause_after_seconds: float,
-) -> List[Any]:
+def _build_prompt_segment(start: Any, end: Any, text: str) -> List[Any]:
     start_seconds = float(start)
     end_seconds = max(start_seconds, float(end))
-    duration_seconds = max(0.0, end_seconds - start_seconds)
-    return [
-        start_seconds,
-        end_seconds,
-        str(text),
-        duration_seconds,
-        max(0.0, float(pause_before_seconds)),
-        max(0.0, float(pause_after_seconds)),
-    ]
+    return [start_seconds, end_seconds, str(text)]
 
 
 def _estimate_split_window_times(
@@ -115,8 +101,6 @@ def _split_segment_to_budget(
     text: str,
     *,
     budget: int,
-    pause_before_seconds: float,
-    pause_after_seconds: float,
 ) -> List[List[Any]]:
     words = str(text).split()
     if not words:
@@ -145,8 +129,6 @@ def _split_segment_to_budget(
                 start=mini_start,
                 end=mini_end,
                 text=mini_text,
-                pause_before_seconds=pause_before_seconds if word_start == 0 else 0.0,
-                pause_after_seconds=pause_after_seconds if (word_start + window_word_count) >= total_words else 0.0,
             )
             if estimate_tokens(json.dumps(candidate, ensure_ascii=True)) <= budget:
                 break
@@ -165,13 +147,61 @@ def _split_segment_to_budget(
                 start=mini_start,
                 end=mini_end,
                 text=mini_text,
-                pause_before_seconds=pause_before_seconds if word_start == 0 else 0.0,
-                pause_after_seconds=pause_after_seconds if (word_start + window_word_count) >= total_words else 0.0,
             )
         )
         word_start += window_word_count
 
     return windows
+
+
+def build_chunk_pause_hints(
+    chunks: Sequence[Sequence[Sequence[Any]]],
+    transcript: Sequence[Sequence[Any]],
+    min_pause_seconds: float = 1.25,
+    max_hints: int = 6,
+) -> List[List[List[float]]]:
+    threshold = max(0.0, float(min_pause_seconds))
+    cap = max(0, int(max_hints))
+    if cap <= 0:
+        return [[] for _ in chunks]
+
+    pause_candidates: List[List[float]] = []
+    for index, segment in enumerate(transcript):
+        if len(segment) < 2:
+            continue
+        start = float(segment[0])
+        end = float(segment[1])
+        previous_end = transcript[index - 1][1] if index > 0 and len(transcript[index - 1]) >= 2 else start
+        next_start = transcript[index + 1][0] if (index + 1) < len(transcript) and len(transcript[index + 1]) >= 1 else end
+        pause_before = _gap_seconds(previous_end, start)
+        pause_after = _gap_seconds(end, next_start)
+        if pause_before < threshold and pause_after < threshold:
+            continue
+        pause_candidates.append([start, end, pause_before, pause_after])
+
+    hints_by_chunk: List[List[List[float]]] = []
+    for chunk in chunks:
+        if not chunk:
+            hints_by_chunk.append([])
+            continue
+
+        chunk_start = float(chunk[0][0])
+        chunk_end = float(chunk[-1][1])
+        overlapping = [
+            candidate
+            for candidate in pause_candidates
+            if float(candidate[0]) >= chunk_start and float(candidate[1]) <= chunk_end
+        ]
+        ranked = sorted(
+            overlapping,
+            key=lambda row: (-max(float(row[2]), float(row[3])), float(row[0]), float(row[1])),
+        )[:cap]
+        ordered = sorted(ranked, key=lambda row: (float(row[0]), float(row[1])))
+        hints_by_chunk.append(
+            [[float(row[0]), float(row[1]), float(row[2]), float(row[3])] for row in ordered]
+        )
+
+    return hints_by_chunk
 
 
 def chunk_transcript(
@@ -182,29 +212,18 @@ def chunk_transcript(
 ) -> List[List[List[Any]]]:
     """
     Split transcript into chunk lists while respecting a max token budget.
-    Output chunk rows: [start, end, text, duration_seconds, pause_before_seconds, pause_after_seconds]
+    Output chunk rows: [start, end, text]
     """
     budget = max(256, int(max_tokens) - max(0, int(safety_margin)))
     chunks: List[List[List[Any]]] = []
     current_chunk: List[List[Any]] = []
     current_tokens = 0
 
-    for index, segment in enumerate(transcript):
+    for segment in transcript:
         if len(segment) < 3:
             continue
         start, end, text = segment[0], segment[1], str(segment[2])
-        previous_end = transcript[index - 1][1] if index > 0 and len(transcript[index - 1]) >= 2 else start
-        next_start = transcript[index + 1][0] if (index + 1) < len(transcript) and len(transcript[index + 1]) >= 1 else end
-        pause_before = _gap_seconds(previous_end, start)
-        pause_after = _gap_seconds(end, next_start)
-
-        prompt_segment = _build_prompt_segment(
-            start=start,
-            end=end,
-            text=text,
-            pause_before_seconds=pause_before,
-            pause_after_seconds=pause_after,
-        )
+        prompt_segment = _build_prompt_segment(start=start, end=end, text=text)
         seg_tokens = estimate_tokens(json.dumps(prompt_segment, ensure_ascii=True))
 
         if seg_tokens > budget:
@@ -213,8 +232,6 @@ def chunk_transcript(
                 end=float(end),
                 text=text,
                 budget=budget,
-                pause_before_seconds=pause_before,
-                pause_after_seconds=pause_after,
             )
             for split_segment in split_segments:
                 mini_tokens = estimate_tokens(json.dumps(split_segment, ensure_ascii=True))
@@ -486,20 +503,26 @@ class AIPipeline:
         self,
         chunk: Sequence[Sequence[Any]],
         user_query: str,
+        pause_hints: Optional[Sequence[Sequence[float]]] = None,
         strict_mode: bool = False,
     ) -> str:
         chunking_context = (
             "Chunking context:\n"
             "- You are seeing one chunk from a larger transcript.\n"
-            "- Each transcript row is [start, end, text, duration_seconds, pause_before_seconds, pause_after_seconds].\n"
-            "- Use duration and pause cues to prefer natural starts/ends after silence or speaker resets.\n"
-            "- Avoid selecting clips from trailing chunk edges if context appears incomplete.\n"
+            "- Each transcript row is [start, end, text].\n"
+            "- Optional pause boundary hints only help with cleaner boundaries; they do not mean a clip must be selected.\n"
+            "- Chunk-edge selections are allowed when the visible transcript clearly forms a complete thought.\n"
             "- Output only JSON."
         )
+        prompt_sections = [f"Transcript JSON chunk:\n{json.dumps(chunk, ensure_ascii=True)}"]
+        if pause_hints:
+            prompt_sections.append(
+                f"Optional pause boundary hints:\n{json.dumps(list(pause_hints), ensure_ascii=True)}"
+            )
+        prompt_sections.append(f"User query:\n{user_query}")
+        prompt_sections.append("Return only JSON list of clips: [[start, end, score], ...].")
         prompt = (
-            f"Transcript JSON chunk:\n{json.dumps(chunk, ensure_ascii=True)}\n\n"
-            f"User query:\n{user_query}\n\n"
-            "Return only JSON list of clips: [[start, end, score], ...]."
+            "\n\n".join(prompt_sections)
         )
         system_message = f"{self.system_prompt}\n\n{chunking_context}\n\n{RELEVANCE_GUARDRAIL}"
         if strict_mode:
@@ -515,6 +538,7 @@ class AIPipeline:
         self,
         chunk: Sequence[Sequence[Any]],
         user_query: str,
+        pause_hints: Optional[Sequence[Sequence[float]]] = None,
         max_retries: int = 3,
     ) -> List[List[float]]:
         prompt_hint = ""
@@ -524,6 +548,7 @@ class AIPipeline:
                 raw = self._scan_chunk_once(
                     chunk,
                     f"{user_query}\n{prompt_hint}".strip(),
+                    pause_hints=pause_hints,
                     strict_mode=strict_mode,
                 )
             except Exception as exc:
@@ -558,15 +583,25 @@ class AIPipeline:
         chunks: Sequence[Sequence[Sequence[Any]]],
         user_query: str,
         ai_loops: int,
+        pause_hints_by_chunk: Optional[Sequence[Sequence[Sequence[float]]]] = None,
         progress_callback: Optional[Callable[[int, int, int, int, int], None]] = None,
     ) -> List[List[List[float]]]:
         all_outputs: List[List[List[float]]] = []
         loop_count = max(1, int(ai_loops))
         total_chunks = len(chunks)
         for chunk_index, chunk in enumerate(chunks, start=1):
+            pause_hints = (
+                pause_hints_by_chunk[chunk_index - 1]
+                if pause_hints_by_chunk is not None and (chunk_index - 1) < len(pause_hints_by_chunk)
+                else None
+            )
             combined: List[List[float]] = []
             for loop_index in range(1, loop_count + 1):
-                output = self.scan_chunk_with_retries(chunk=chunk, user_query=user_query)
+                output = self.scan_chunk_with_retries(
+                    chunk=chunk,
+                    user_query=user_query,
+                    pause_hints=pause_hints,
+                )
                 if output:
                     combined.extend(output)
                 if progress_callback:
