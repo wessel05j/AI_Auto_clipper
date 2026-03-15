@@ -112,7 +112,7 @@ Notes:
 - `core/ai_pipeline.py`: Ollama chat layer.
   - Chunk scanner with retries and strict parsing.
   - JSON cleaning/repair fallback for resilient outputs.
-- `core/clipping.py`: transcript merge and final video cutting with MoviePy.
+- `core/clipping.py`: transcript merge and final video cutting with FFmpeg stream-copy trimming plus optional exact re-encode mode.
 - `core/yt_handler.py`: YouTube ingestion.
   - URL normalization, channel RSS fetch, history tracking.
   - Multi-strategy yt-dlp download with format probing.

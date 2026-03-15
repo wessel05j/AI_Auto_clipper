@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import logging
 import re
+import shutil
+import subprocess
 import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
-
-from moviepy.editor import VideoFileClip
-
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 
@@ -92,6 +92,8 @@ def transcribe_video(
         merged.append([float(current["start"]), float(current["end"]), str(current["text"]).strip()])
 
     return merged
+
+
 def merge_segments(segment_list: Sequence[Sequence[Sequence[float]]], tolerance_seconds: float) -> List[List[float]]:
     all_blocks: List[List[float]] = []
     for group in segment_list:
@@ -147,6 +149,307 @@ def _sanitize_input_video_file(file_path: Path) -> Path:
         counter += 1
 
 
+def _require_binary(name: str) -> str:
+    resolved = shutil.which(name)
+    if resolved:
+        return resolved
+    raise RuntimeError(f"Required tool not found in PATH: {name}")
+
+
+def _format_ffmpeg_time(seconds: float) -> str:
+    formatted = f"{max(0.0, seconds):.6f}".rstrip("0").rstrip(".")
+    return formatted or "0"
+
+
+def _delete_partial_output(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _summarize_error_details(details: str, max_lines: int = 4, max_chars: int = 500) -> str:
+    lines = [line.strip() for line in str(details).splitlines() if line.strip()]
+    normalized = " ".join(lines[:max_lines])
+    if not normalized:
+        return "unknown ffmpeg error"
+    if len(lines) > max_lines:
+        normalized = f"{normalized} ..."
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[: max_chars - 3].rstrip()}..."
+
+
+def _probe_duration_seconds(path: Path, ffprobe_bin: str, *, strict: bool = False) -> Optional[float]:
+    command = [
+        ffprobe_bin,
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_entries",
+        "format=duration:stream=duration",
+        str(path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is required for clip validation") from exc
+
+    if completed.returncode != 0:
+        if strict:
+            details = completed.stderr.strip() or completed.stdout.strip() or "unknown ffprobe error"
+            raise RuntimeError(f"ffprobe failed for {path}: {details}")
+        return None
+
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        if strict:
+            raise RuntimeError(f"ffprobe returned invalid JSON for {path}")
+        return None
+
+    duration_candidates: List[float] = []
+
+    format_info = payload.get("format", {})
+    if isinstance(format_info, dict):
+        try:
+            format_duration = float(format_info.get("duration"))
+        except (TypeError, ValueError):
+            format_duration = 0.0
+        if format_duration > 0:
+            duration_candidates.append(format_duration)
+
+    streams = payload.get("streams", [])
+    if isinstance(streams, list):
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            try:
+                stream_duration = float(stream.get("duration"))
+            except (TypeError, ValueError):
+                stream_duration = 0.0
+            if stream_duration > 0:
+                duration_candidates.append(stream_duration)
+
+    if duration_candidates:
+        return max(duration_candidates)
+    if strict:
+        raise RuntimeError(f"Unable to determine media duration for {path}")
+    return None
+
+
+def _validate_media_output(path: Path, ffprobe_bin: str) -> tuple[bool, str]:
+    if not path.exists():
+        return False, "file was not created"
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return False, f"unable to stat file: {exc}"
+    if size <= 0:
+        return False, "file is empty"
+
+    duration = _probe_duration_seconds(path, ffprobe_bin, strict=False)
+    if duration is None or duration <= 0:
+        return False, "ffprobe reported invalid duration"
+    return True, ""
+
+
+def _run_ffmpeg_command(command: Sequence[str]) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            list(command),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg is required for clip extraction") from exc
+
+    if completed.returncode == 0:
+        return True, ""
+
+    details = completed.stderr.strip() or completed.stdout.strip() or f"ffmpeg exited with code {completed.returncode}"
+    return False, details
+
+
+def _copy_trim_command(ffmpeg_bin: str, source_video: Path, output_path: Path, start: float, duration: float) -> List[str]:
+    return [
+        ffmpeg_bin,
+        "-y",
+        "-v",
+        "error",
+        "-nostdin",
+        "-ss",
+        _format_ffmpeg_time(start),
+        "-i",
+        str(source_video),
+        "-t",
+        _format_ffmpeg_time(duration),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a?",
+        "-sn",
+        "-dn",
+        "-c",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        str(output_path),
+    ]
+
+
+def _reencode_trim_command(ffmpeg_bin: str, source_video: Path, output_path: Path, start: float, duration: float) -> List[str]:
+    return [
+        ffmpeg_bin,
+        "-y",
+        "-v",
+        "error",
+        "-nostdin",
+        "-i",
+        str(source_video),
+        "-ss",
+        _format_ffmpeg_time(start),
+        "-t",
+        _format_ffmpeg_time(duration),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a?",
+        "-sn",
+        "-dn",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+
+def _existing_output_candidates(mp4_output: Path, mkv_output: Path, exact_trim_reencode: bool) -> List[Path]:
+    if exact_trim_reencode:
+        return [mp4_output]
+    return [mp4_output, mkv_output]
+
+
+def _find_existing_output(
+    candidates: Sequence[Path],
+    ffprobe_bin: str,
+    logger: logging.Logger,
+) -> Optional[Path]:
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        valid, reason = _validate_media_output(candidate, ffprobe_bin)
+        if valid:
+            return candidate
+        logger.warning("Removing invalid existing clip %s: %s", candidate.name, reason)
+        _delete_partial_output(candidate)
+    return None
+
+
+def _extract_clip_stream_copy(
+    *,
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    source_video: Path,
+    mp4_output: Path,
+    mkv_output: Path,
+    start: float,
+    duration: float,
+    logger: logging.Logger,
+) -> Path:
+    errors: List[str] = []
+
+    attempts = [
+        (mp4_output, _copy_trim_command(ffmpeg_bin, source_video, mp4_output, start, duration)),
+        (mkv_output, _copy_trim_command(ffmpeg_bin, source_video, mkv_output, start, duration)),
+    ]
+
+    for attempt_index, (output_path, command) in enumerate(attempts, start=1):
+        _delete_partial_output(output_path)
+        succeeded, details = _run_ffmpeg_command(command)
+        valid, reason = _validate_media_output(output_path, ffprobe_bin)
+        if valid:
+            if not succeeded:
+                logger.warning(
+                    "FFmpeg reported errors while trimming %s to %s, but the output passed validation. Details: %s",
+                    source_video.name,
+                    output_path.name,
+                    _summarize_error_details(details),
+                )
+            if output_path.suffix.lower() == ".mkv":
+                logger.warning(
+                    "MP4 stream-copy trim was incompatible for %s; kept clip as %s",
+                    source_video.name,
+                    output_path.name,
+                )
+            return output_path
+        if succeeded:
+            details = reason
+
+        _delete_partial_output(output_path)
+        errors.append(f"{output_path.suffix.lower()} copy trim failed: {details}")
+
+        if attempt_index == 1:
+            logger.warning(
+                "MP4 stream-copy trim failed for %s; retrying Matroska container. Details: %s",
+                source_video.name,
+                _summarize_error_details(details),
+            )
+
+    raise RuntimeError("; ".join(errors))
+
+
+def _extract_clip_reencode(
+    *,
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    source_video: Path,
+    output_path: Path,
+    start: float,
+    duration: float,
+    logger: logging.Logger,
+) -> Path:
+    _delete_partial_output(output_path)
+    succeeded, details = _run_ffmpeg_command(
+        _reencode_trim_command(ffmpeg_bin, source_video, output_path, start, duration)
+    )
+    valid, reason = _validate_media_output(output_path, ffprobe_bin)
+    if valid:
+        if not succeeded:
+            logger.warning(
+                "FFmpeg reported errors while exact-trimming %s to %s, but the output passed validation. Details: %s",
+                source_video.name,
+                output_path.name,
+                _summarize_error_details(details),
+            )
+        return output_path
+
+    _delete_partial_output(output_path)
+    if not succeeded:
+        raise RuntimeError(details)
+    raise RuntimeError(reason)
+
+
 def extract_clips(
     clips: Sequence[Sequence[float]],
     source_video: Path,
@@ -156,47 +459,72 @@ def extract_clips(
     clip_name_indices: Optional[Sequence[int]] = None,
     skip_existing: bool = False,
     on_clip_done: Optional[Callable[[int, str, bool], None]] = None,
+    exact_trim_reencode: bool = False,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     clip_count = 0
     if clip_name_indices is not None and len(clip_name_indices) != len(clips):
         raise ValueError("clip_name_indices length must match clips length")
 
-    with VideoFileClip(str(source_video)) as main_video:
-        duration = float(main_video.duration or 0.0)
-        if duration <= 0:
-            raise RuntimeError(f"Video has invalid duration: {source_video}")
+    ffmpeg_bin = _require_binary("ffmpeg")
+    ffprobe_bin = _require_binary("ffprobe")
+    source_duration = _probe_duration_seconds(source_video, ffprobe_bin, strict=True)
+    if source_duration is None or source_duration <= 0:
+        raise RuntimeError(f"Video has invalid duration: {source_video}")
 
-        base_name = sanitize_filename(source_video.stem)
-        for index, clip in enumerate(clips, start=1):
-            clip_idx = int(clip_name_indices[index - 1]) if clip_name_indices is not None else index
-            if len(clip) < 2:
-                continue
-            start = max(0.0, float(clip[0]))
-            end = min(duration, float(clip[1]))
-            if end <= start:
-                continue
+    base_name = sanitize_filename(source_video.stem)
+    for index, clip in enumerate(clips, start=1):
+        clip_idx = int(clip_name_indices[index - 1]) if clip_name_indices is not None else index
+        if len(clip) < 2:
+            continue
+        start = max(0.0, float(clip[0]))
+        end = min(source_duration, float(clip[1]))
+        if end <= start:
+            continue
 
-            score = float(clip[2]) if len(clip) > 2 else 5.0
-            filename = output_dir / f"{base_name}_{clip_idx:03d}_r{int(round(score))}.mp4"
-            if skip_existing and filename.exists() and filename.stat().st_size > 0:
-                if on_clip_done is not None:
-                    on_clip_done(clip_idx, str(filename), False)
-                continue
-            subclip = main_video.subclip(start, end)
-            subclip.write_videofile(
-                str(filename),
-                codec="libx264",
-                audio_codec="aac",
-                temp_audiofile=str(output_dir / f"temp_audio_{index:03d}.m4a"),
-                remove_temp=True,
-                threads=4,
-                logger=None,
+        score = float(clip[2]) if len(clip) > 2 else 5.0
+        clip_stem = f"{base_name}_{clip_idx:03d}_r{int(round(score))}"
+        mp4_output = output_dir / f"{clip_stem}.mp4"
+        mkv_output = output_dir / f"{clip_stem}.mkv"
+
+        if skip_existing:
+            existing_output = _find_existing_output(
+                _existing_output_candidates(mp4_output, mkv_output, exact_trim_reencode),
+                ffprobe_bin,
+                logger,
             )
-            clip_count += 1
-            if on_clip_done is not None:
-                on_clip_done(clip_idx, str(filename), True)
-            if clip_count % max(1, progress_interval) == 0:
-                logger.info("Extracted %s clips from %s", clip_count, source_video.name)
+            if existing_output is not None:
+                if on_clip_done is not None:
+                    on_clip_done(clip_idx, str(existing_output), False)
+                continue
+
+        duration = end - start
+        if exact_trim_reencode:
+            created_output = _extract_clip_reencode(
+                ffmpeg_bin=ffmpeg_bin,
+                ffprobe_bin=ffprobe_bin,
+                source_video=source_video,
+                output_path=mp4_output,
+                start=start,
+                duration=duration,
+                logger=logger,
+            )
+        else:
+            created_output = _extract_clip_stream_copy(
+                ffmpeg_bin=ffmpeg_bin,
+                ffprobe_bin=ffprobe_bin,
+                source_video=source_video,
+                mp4_output=mp4_output,
+                mkv_output=mkv_output,
+                start=start,
+                duration=duration,
+                logger=logger,
+            )
+
+        clip_count += 1
+        if on_clip_done is not None:
+            on_clip_done(clip_idx, str(created_output), True)
+        if clip_count % max(1, progress_interval) == 0:
+            logger.info("Extracted %s clips from %s", clip_count, source_video.name)
 
     return clip_count
