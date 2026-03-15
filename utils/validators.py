@@ -21,7 +21,8 @@ MIN_THINKING_B = 8.0
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert transcript clip selector for the users request.\n"
     "Input:\n"
-    "- JSON transcript: [[start, end, \"text\"], ...] with start/end in seconds.\n\n"
+    "- JSON transcript rows: [start, end, \"text\", duration_seconds, pause_before_seconds, pause_after_seconds].\n"
+    "- Use duration/pause cues to prefer natural clip starts and endings when silence surrounds a complete thought.\n\n"
     "OUTPUT ONLY (STRICT):\n"
     "- ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]\n"
     "- The third element is how well the clip matches the user query "
@@ -122,7 +123,7 @@ def build_default_config() -> Dict[str, Any]:
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
             "merge_distance_seconds": 20,
             "ai_loops": 2,
-            "exact_trim_reencode": False,
+            "exact_trim_reencode": True,
             "enable_youtube_downloads": True,
             "youtube_links": [],
             "channels": [],
@@ -297,7 +298,7 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     if not isinstance(config["clipping"].get("channels", []), list):
         errors.append("clipping.channels must be a list")
     if "exact_trim_reencode" not in config["clipping"]:
-        config["clipping"]["exact_trim_reencode"] = False
+        config["clipping"]["exact_trim_reencode"] = True
     if not isinstance(config["clipping"].get("exact_trim_reencode", False), bool):
         errors.append("clipping.exact_trim_reencode must be true/false")
     if "enable_youtube_downloads" not in config["clipping"]:

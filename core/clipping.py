@@ -459,7 +459,7 @@ def extract_clips(
     clip_name_indices: Optional[Sequence[int]] = None,
     skip_existing: bool = False,
     on_clip_done: Optional[Callable[[int, str, bool], None]] = None,
-    exact_trim_reencode: bool = False,
+    exact_trim_reencode: bool = True,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     clip_count = 0

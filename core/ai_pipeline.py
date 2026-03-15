@@ -32,6 +32,7 @@ RELEVANCE_GUARDRAIL = (
     "- Reject clips that are mostly music, intro/outro filler, grunts, or non-verbal effort sounds.\n"
     "- Respect explicit duration constraints written in the user query.\n"
     "- Prefer coherent complete thoughts with natural start/end boundaries.\n"
+    "- Use pause/duration cues to favor natural starts and endings around silence or speaker resets.\n"
     "- For 'at least X seconds', treat X as a minimum floor, not an exact target."
 )
 
@@ -52,6 +53,127 @@ def estimate_tokens(text: str) -> int:
     return max(1, math.floor(len(text) / 3.5))
 
 
+def _gap_seconds(previous_end: Any, next_start: Any) -> float:
+    try:
+        gap = float(next_start) - float(previous_end)
+    except Exception:
+        return 0.0
+    return max(0.0, gap)
+
+
+def _build_prompt_segment(
+    start: Any,
+    end: Any,
+    text: str,
+    pause_before_seconds: float,
+    pause_after_seconds: float,
+) -> List[Any]:
+    start_seconds = float(start)
+    end_seconds = max(start_seconds, float(end))
+    duration_seconds = max(0.0, end_seconds - start_seconds)
+    return [
+        start_seconds,
+        end_seconds,
+        str(text),
+        duration_seconds,
+        max(0.0, float(pause_before_seconds)),
+        max(0.0, float(pause_after_seconds)),
+    ]
+
+
+def _estimate_split_window_times(
+    start: float,
+    end: float,
+    total_words: int,
+    window_word_start: int,
+    window_word_count: int,
+) -> tuple[float, float]:
+    start_seconds = float(start)
+    end_seconds = max(start_seconds, float(end))
+    if total_words <= 0 or window_word_count <= 0 or end_seconds <= start_seconds:
+        return start_seconds, end_seconds
+
+    duration = end_seconds - start_seconds
+    range_start = start_seconds + (duration * (window_word_start / total_words))
+    range_end_index = window_word_start + window_word_count
+    if range_end_index >= total_words:
+        range_end = end_seconds
+    else:
+        range_end = start_seconds + (duration * (range_end_index / total_words))
+
+    if range_end <= range_start:
+        minimum_step = max(duration / max(total_words, 1), 0.05)
+        range_end = min(end_seconds, range_start + minimum_step)
+    if range_end <= range_start:
+        range_end = end_seconds
+    return range_start, range_end
+
+
+def _split_segment_to_budget(
+    start: float,
+    end: float,
+    text: str,
+    *,
+    budget: int,
+    pause_before_seconds: float,
+    pause_after_seconds: float,
+) -> List[List[Any]]:
+    words = str(text).split()
+    if not words:
+        return []
+
+    total_words = len(words)
+    average_tokens_per_word = max(1.0, estimate_tokens(text) / max(1, total_words))
+    words_per_window = min(total_words, max(1, int(budget / average_tokens_per_word)))
+    windows: List[List[Any]] = []
+    word_start = 0
+
+    while word_start < total_words:
+        remaining_words = total_words - word_start
+        window_word_count = min(words_per_window, remaining_words)
+
+        while window_word_count > 1:
+            mini_text = " ".join(words[word_start : word_start + window_word_count])
+            mini_start, mini_end = _estimate_split_window_times(
+                start=start,
+                end=end,
+                total_words=total_words,
+                window_word_start=word_start,
+                window_word_count=window_word_count,
+            )
+            candidate = _build_prompt_segment(
+                start=mini_start,
+                end=mini_end,
+                text=mini_text,
+                pause_before_seconds=pause_before_seconds if word_start == 0 else 0.0,
+                pause_after_seconds=pause_after_seconds if (word_start + window_word_count) >= total_words else 0.0,
+            )
+            if estimate_tokens(json.dumps(candidate, ensure_ascii=True)) <= budget:
+                break
+            window_word_count -= 1
+
+        mini_text = " ".join(words[word_start : word_start + window_word_count])
+        mini_start, mini_end = _estimate_split_window_times(
+            start=start,
+            end=end,
+            total_words=total_words,
+            window_word_start=word_start,
+            window_word_count=window_word_count,
+        )
+        windows.append(
+            _build_prompt_segment(
+                start=mini_start,
+                end=mini_end,
+                text=mini_text,
+                pause_before_seconds=pause_before_seconds if word_start == 0 else 0.0,
+                pause_after_seconds=pause_after_seconds if (word_start + window_word_count) >= total_words else 0.0,
+            )
+        )
+        word_start += window_word_count
+
+    return windows
+
+
 def chunk_transcript(
     transcript: Sequence[Sequence[Any]],
     max_tokens: int,
@@ -60,34 +182,47 @@ def chunk_transcript(
 ) -> List[List[List[Any]]]:
     """
     Split transcript into chunk lists while respecting a max token budget.
-    Transcript format: [[start, end, text], ...]
+    Output chunk rows: [start, end, text, duration_seconds, pause_before_seconds, pause_after_seconds]
     """
     budget = max(256, int(max_tokens) - max(0, int(safety_margin)))
     chunks: List[List[List[Any]]] = []
     current_chunk: List[List[Any]] = []
     current_tokens = 0
 
-    for segment in transcript:
+    for index, segment in enumerate(transcript):
         if len(segment) < 3:
             continue
         start, end, text = segment[0], segment[1], str(segment[2])
-        serialized = f"{start} {end} {text}"
-        seg_tokens = estimate_tokens(serialized)
+        previous_end = transcript[index - 1][1] if index > 0 and len(transcript[index - 1]) >= 2 else start
+        next_start = transcript[index + 1][0] if (index + 1) < len(transcript) and len(transcript[index + 1]) >= 1 else end
+        pause_before = _gap_seconds(previous_end, start)
+        pause_after = _gap_seconds(end, next_start)
+
+        prompt_segment = _build_prompt_segment(
+            start=start,
+            end=end,
+            text=text,
+            pause_before_seconds=pause_before,
+            pause_after_seconds=pause_after,
+        )
+        seg_tokens = estimate_tokens(json.dumps(prompt_segment, ensure_ascii=True))
 
         if seg_tokens > budget:
-            words = text.split()
-            if not words:
-                continue
-            words_per_window = max(8, int(budget * 0.8))
-            for index in range(0, len(words), words_per_window):
-                mini_words = words[index : index + words_per_window]
-                mini_text = " ".join(mini_words)
-                mini_tokens = estimate_tokens(mini_text)
+            split_segments = _split_segment_to_budget(
+                start=float(start),
+                end=float(end),
+                text=text,
+                budget=budget,
+                pause_before_seconds=pause_before,
+                pause_after_seconds=pause_after,
+            )
+            for split_segment in split_segments:
+                mini_tokens = estimate_tokens(json.dumps(split_segment, ensure_ascii=True))
                 if current_tokens + mini_tokens > budget and current_chunk:
                     chunks.append(current_chunk)
                     current_chunk = []
                     current_tokens = 0
-                current_chunk.append([start, end, mini_text])
+                current_chunk.append(split_segment)
                 current_tokens += mini_tokens
             continue
 
@@ -96,7 +231,7 @@ def chunk_transcript(
             current_chunk = []
             current_tokens = 0
 
-        current_chunk.append([start, end, text])
+        current_chunk.append(prompt_segment)
         current_tokens += seg_tokens
 
     if current_chunk:
@@ -189,6 +324,12 @@ def _validate_clip_schema(payload: Any) -> List[List[float]]:
     return deduped
 
 
+def _unwrap_clip_payload(payload: Any) -> Any:
+    if isinstance(payload, dict) and "clips" in payload:
+        return payload.get("clips")
+    return payload
+
+
 def _parse_from_lines(cleaned: str) -> List[List[float]]:
     parsed_items: List[List[float]] = []
     for line in cleaned.splitlines():
@@ -196,7 +337,7 @@ def _parse_from_lines(cleaned: str) -> List[List[float]]:
         if not candidate:
             continue
         try:
-            line_payload = json.loads(candidate)
+            line_payload = _unwrap_clip_payload(json.loads(candidate))
         except Exception:
             continue
 
@@ -242,7 +383,7 @@ def parse_clip_response(raw_text: str) -> List[List[float]]:
 
     for candidate in candidates:
         try:
-            parsed = json.loads(candidate)
+            parsed = _unwrap_clip_payload(json.loads(candidate))
             return _validate_clip_schema(parsed)
         except Exception as exc:
             parse_errors.append(str(exc))
@@ -350,6 +491,8 @@ class AIPipeline:
         chunking_context = (
             "Chunking context:\n"
             "- You are seeing one chunk from a larger transcript.\n"
+            "- Each transcript row is [start, end, text, duration_seconds, pause_before_seconds, pause_after_seconds].\n"
+            "- Use duration and pause cues to prefer natural starts/ends after silence or speaker resets.\n"
             "- Avoid selecting clips from trailing chunk edges if context appears incomplete.\n"
             "- Output only JSON."
         )

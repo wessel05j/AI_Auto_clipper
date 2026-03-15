@@ -132,7 +132,7 @@ class ClippingEngine:
                 "merge_distance_seconds": int(clipping.get("merge_distance_seconds", 20)),
                 "ai_loops": int(clipping.get("ai_loops", 2)),
                 "clip_progress_interval": int(clipping.get("clip_progress_interval", 5)),
-                "exact_trim_reencode": bool(clipping.get("exact_trim_reencode", False)),
+                "exact_trim_reencode": bool(clipping.get("exact_trim_reencode", True)),
             },
             "runtime": {
                 "total_context_tokens": int(runtime_cfg.get("total_context_tokens", 8192)),
@@ -1149,6 +1149,7 @@ class ClippingEngine:
                                 chunking_state = checkpoint.get("chunking")
                                 chunking_meta = checkpoint.get("chunking_meta", {})
                                 expected_meta = {
+                                    "chunk_schema_version": 2,
                                     "max_chunk_tokens": int(max_chunk_tokens),
                                     "chunk_overlap_segments": int(max(0, chunk_overlap_segments)),
                                     "enable_bridge_chunks": bool(enable_bridge_chunks),
@@ -1381,7 +1382,7 @@ class ClippingEngine:
                                         skip_existing=True,
                                         on_clip_done=on_clip_done,
                                         exact_trim_reencode=bool(
-                                            self.config.get("clipping", {}).get("exact_trim_reencode", False)
+                                            self.config.get("clipping", {}).get("exact_trim_reencode", True)
                                         ),
                                     )
                                 self.logger.info(
