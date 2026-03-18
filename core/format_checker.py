@@ -4,10 +4,34 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
+QUALITY_2160 = 3
+QUALITY_1440 = 2
+QUALITY_1080 = 1
+QUALITY_BELOW_1080 = 0
+
+QUALITY_LABELS = {
+    QUALITY_2160: "2160-class",
+    QUALITY_1440: "1440-class",
+    QUALITY_1080: "1080-class",
+    QUALITY_BELOW_1080: "below-1080",
+}
+
+
 @dataclass
 class FormatDecision:
-    format_string: str
+    format_string: Optional[str]
     strategy: str
+    acceptable: bool
+    quality_rank: int
+    quality_label: str
+    format_id: str = ""
+    width: int = 0
+    height: int = 0
+    vcodec: str = ""
+    acodec: str = ""
+    bitrate: float = 0.0
+    source_type: str = ""
+    reason: str = ""
 
 
 def _to_int(value: Any) -> Optional[int]:
@@ -36,60 +60,129 @@ def _is_progressive(fmt: Dict[str, Any]) -> bool:
     return fmt.get("vcodec") not in (None, "none") and fmt.get("acodec") not in (None, "none")
 
 
-def _sort_key(fmt: Dict[str, Any]) -> tuple[int, float]:
+def classify_quality(width: Optional[int], height: Optional[int], format_note: str = "") -> tuple[int, str]:
+    width_value = int(width or 0)
+    height_value = int(height or 0)
+    note = str(format_note or "").lower()
+
+    if width_value >= 3840 or "2160" in note or height_value >= 1600:
+        return QUALITY_2160, QUALITY_LABELS[QUALITY_2160]
+    if width_value >= 2560 or "1440" in note or height_value >= 1000:
+        return QUALITY_1440, QUALITY_LABELS[QUALITY_1440]
+    if width_value >= 1920 or "1080" in note or height_value >= 800:
+        return QUALITY_1080, QUALITY_LABELS[QUALITY_1080]
+    return QUALITY_BELOW_1080, QUALITY_LABELS[QUALITY_BELOW_1080]
+
+
+def _candidate_from_format(fmt: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(fmt, dict):
+        return None
+    format_id = str(fmt.get("format_id") or "").strip()
+    if not format_id:
+        return None
+    if not (_is_video_only(fmt) or _is_progressive(fmt)):
+        return None
+
+    width = _to_int(fmt.get("width")) or 0
     height = _to_int(fmt.get("height")) or 0
     bitrate = _to_float(fmt.get("tbr") or fmt.get("vbr"))
-    return height, bitrate
+    quality_rank, quality_label = classify_quality(width, height, str(fmt.get("format_note") or ""))
+    source_type = "video-only" if _is_video_only(fmt) else "progressive"
+
+    return {
+        "format_id": format_id,
+        "width": width,
+        "height": height,
+        "bitrate": bitrate,
+        "quality_rank": quality_rank,
+        "quality_label": quality_label,
+        "source_type": source_type,
+        "vcodec": str(fmt.get("vcodec") or ""),
+        "acodec": str(fmt.get("acodec") or ""),
+    }
 
 
-def _pick_video_stream(formats: List[Dict[str, Any]], min_height: int, max_height: int) -> Optional[Dict[str, Any]]:
-    candidates: List[Dict[str, Any]] = []
-    for fmt in formats:
-        if not _is_video_only(fmt):
-            continue
-        height = _to_int(fmt.get("height"))
-        if height is None:
-            continue
-        if min_height <= height <= max_height:
-            candidates.append(fmt)
-
-    if not candidates:
-        return None
-    candidates.sort(key=_sort_key, reverse=True)
-    return candidates[0]
+def _candidate_sort_key(candidate: Dict[str, Any]) -> tuple[int, int, float, int, int]:
+    source_preference = 1 if candidate.get("source_type") == "video-only" else 0
+    return (
+        int(candidate.get("quality_rank", QUALITY_BELOW_1080)),
+        source_preference,
+        float(candidate.get("bitrate", 0.0)),
+        int(candidate.get("width", 0)),
+        int(candidate.get("height", 0)),
+    )
 
 
-def _pick_progressive(formats: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    progressive = [fmt for fmt in formats if _is_progressive(fmt)]
-    if not progressive:
-        return None
-    progressive.sort(key=_sort_key, reverse=True)
-    return progressive[0]
+def _decision_from_candidate(candidate: Dict[str, Any], *, acceptable: bool, reason: str = "") -> FormatDecision:
+    source_type = str(candidate.get("source_type") or "")
+    format_id = str(candidate.get("format_id") or "")
+    quality_label = str(candidate.get("quality_label") or QUALITY_LABELS[QUALITY_BELOW_1080])
+    if acceptable:
+        if source_type == "video-only":
+            format_string = f"{format_id}+bestaudio[acodec!=none]/{format_id}+bestaudio/{format_id}"
+            strategy = f"{quality_label}-video-plus-audio"
+        else:
+            format_string = format_id
+            strategy = f"{quality_label}-progressive"
+    else:
+        format_string = None
+        strategy = f"{quality_label}-rejected"
+
+    return FormatDecision(
+        format_string=format_string,
+        strategy=strategy,
+        acceptable=acceptable,
+        quality_rank=int(candidate.get("quality_rank", QUALITY_BELOW_1080)),
+        quality_label=quality_label,
+        format_id=format_id,
+        width=int(candidate.get("width", 0)),
+        height=int(candidate.get("height", 0)),
+        vcodec=str(candidate.get("vcodec") or ""),
+        acodec=str(candidate.get("acodec") or ""),
+        bitrate=float(candidate.get("bitrate", 0.0)),
+        source_type=source_type,
+        reason=reason,
+    )
 
 
 def choose_download_format(extracted_info: Dict[str, Any]) -> FormatDecision:
     """
-    Select best format with this fallback chain:
-    1) Best available video-only stream (highest resolution/bitrate, no upper cap)
-    2) best progressive (audio + video)
-    3) generic yt-dlp bestvideo+bestaudio fallback
+    Select the highest acceptable stream across the full format inventory.
+    Preference order:
+    1) Highest available quality tier (2160-class > 1440-class > 1080-class)
+    2) Within the same tier, prefer video-only + bestaudio over progressive
+    3) Within the same tier and source type, prefer higher bitrate
     """
     formats = extracted_info.get("formats") or []
     if not isinstance(formats, list) or not formats:
-        return FormatDecision("bestvideo+bestaudio/best", "generic-fallback")
-
-    best_video = _pick_video_stream(formats, min_height=0, max_height=99999)
-    if best_video and best_video.get("format_id"):
-        fmt_id = str(best_video["format_id"])
-        height = _to_int(best_video.get("height")) or 0
-        strategy = f"{height}p-video-plus-audio" if height else "best-video-plus-audio"
         return FormatDecision(
-            format_string=f"{fmt_id}+bestaudio[acodec!=none]/{fmt_id}+bestaudio/{fmt_id}/best",
-            strategy=strategy,
+            format_string=None,
+            strategy="no-format-data",
+            acceptable=False,
+            quality_rank=QUALITY_BELOW_1080,
+            quality_label=QUALITY_LABELS[QUALITY_BELOW_1080],
+            reason="No downloadable formats were exposed by yt-dlp.",
         )
 
-    progressive = _pick_progressive(formats)
-    if progressive and progressive.get("format_id"):
-        return FormatDecision(str(progressive["format_id"]), "progressive-best")
+    candidates = [candidate for fmt in formats if (candidate := _candidate_from_format(fmt)) is not None]
+    if not candidates:
+        return FormatDecision(
+            format_string=None,
+            strategy="no-video-candidates",
+            acceptable=False,
+            quality_rank=QUALITY_BELOW_1080,
+            quality_label=QUALITY_LABELS[QUALITY_BELOW_1080],
+            reason="No valid video streams were exposed by yt-dlp.",
+        )
 
-    return FormatDecision("bestvideo+bestaudio/best", "generic-fallback")
+    candidates.sort(key=_candidate_sort_key, reverse=True)
+    best = candidates[0]
+    quality_rank = int(best.get("quality_rank", QUALITY_BELOW_1080))
+    if quality_rank < QUALITY_1080:
+        return _decision_from_candidate(
+            best,
+            acceptable=False,
+            reason="Best available stream is below the 1080-class minimum quality floor.",
+        )
+
+    return _decision_from_candidate(best, acceptable=True)

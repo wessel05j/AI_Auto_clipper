@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 import yt_dlp
 
-from core.format_checker import choose_download_format
+from core.format_checker import QUALITY_1080, FormatDecision, choose_download_format, classify_quality
 
 
 class _SilentYDLLogger:
@@ -36,6 +38,7 @@ class DownloadResult:
 
 class YTHandler:
     DEFAULT_BROWSERS = ("firefox", "edge", "chrome", "brave", "opera", "vivaldi")
+    VIDEO_FILE_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov"}
     USER_AGENT = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -259,6 +262,82 @@ class YTHandler:
         normalized = self.normalize_video_url(url)
         return normalized in self._load_download_history()
 
+    def _remove_urls_from_history_file(self, history_file: Path, urls: Sequence[str]) -> int:
+        remove_set = {
+            normalized
+            for raw_url in urls
+            if (normalized := self.normalize_video_url(str(raw_url)))
+        }
+        if not remove_set:
+            return 0
+
+        existing_lines: List[str] = []
+        if history_file.exists():
+            with history_file.open("r", encoding="utf-8") as handle:
+                existing_lines = handle.readlines()
+
+        retained_lines: List[str] = []
+        removed_count = 0
+        for line in existing_lines:
+            normalized = self.normalize_video_url(line.strip())
+            if normalized and normalized in remove_set:
+                removed_count += 1
+                continue
+            retained_lines.append(line if line.endswith("\n") else f"{line}\n")
+
+        with history_file.open("w", encoding="utf-8") as handle:
+            handle.writelines(retained_lines)
+
+        if history_file == self.download_history_file:
+            self._download_history_cache = {
+                normalized
+                for line in retained_lines
+                if (normalized := self.normalize_video_url(line.strip()))
+            }
+        elif history_file == self.fetched_history_file:
+            self._fetched_history_cache = {
+                normalized
+                for line in retained_lines
+                if (normalized := self.normalize_video_url(line.strip()))
+            }
+        return removed_count
+
+    @staticmethod
+    def _download_strategies() -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": "cookies-generic",
+                "use_cookies": True,
+            },
+            {
+                "name": "no-cookies-generic",
+                "use_cookies": False,
+            },
+            {
+                "name": "cookies-mobile-tv",
+                "use_cookies": True,
+                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded"]}},
+            },
+            {
+                "name": "no-cookies-mobile-tv",
+                "use_cookies": False,
+                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded"]}},
+            },
+        ]
+
+    def _configure_strategy_opts(self, ydl_opts: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
+        configured = dict(ydl_opts)
+        configured.pop("extractor_args", None)
+        if strategy.get("extractor_args"):
+            configured["extractor_args"] = strategy["extractor_args"]
+
+        if strategy.get("use_cookies", True):
+            self._apply_cookies_to_opts(configured)
+        else:
+            configured.pop("cookiefile", None)
+            configured.pop("cookiesfrombrowser", None)
+        return configured
+
     def _find_cookie_file(self) -> Optional[Path]:
         for candidate in (
             self.base_dir / "resources" / "cookies.txt",
@@ -342,17 +421,15 @@ class YTHandler:
                 return match.group(1)
         return None
 
-    def fetch_recent_links(
+    def list_recent_channel_links(
         self,
         channels: Sequence[str],
         hours_limit: int = 24,
         playlistend: int = 15,
     ) -> List[str]:
         threshold = datetime.now() - timedelta(hours=max(1, int(hours_limit)))
-        downloaded_history = self._load_download_history()
-        fetched_history = self._load_fetched_history()
         seen: set[str] = set()
-        links_found: List[str] = []
+        recent_links: List[str] = []
 
         list_opts: Dict[str, Any] = {
             "quiet": True,
@@ -424,28 +501,48 @@ class YTHandler:
                     url = self.normalize_video_url(
                         f"https://www.youtube.com/watch?v={video_match.group(1).strip()}"
                     )
-                    if not url or url in downloaded_history or url in fetched_history or url in seen:
+                    if not url or url in seen:
                         continue
 
                     seen.add(url)
-                    links_found.append(url)
-                    fetched_history.add(url)
-                    self._add_to_fetched_history(url)
+                    recent_links.append(url)
                     count += 1
                     if count >= max(1, int(playlistend)):
                         break
 
+        return recent_links
+
+    def fetch_recent_links(
+        self,
+        channels: Sequence[str],
+        hours_limit: int = 24,
+        playlistend: int = 15,
+    ) -> List[str]:
+        downloaded_history = self._load_download_history()
+        fetched_history = self._load_fetched_history()
+        recent_links = self.list_recent_channel_links(
+            channels=channels,
+            hours_limit=hours_limit,
+            playlistend=playlistend,
+        )
+
+        links_found: List[str] = []
+        for url in recent_links:
+            if url in downloaded_history or url in fetched_history:
+                continue
+            links_found.append(url)
+            fetched_history.add(url)
+            self._add_to_fetched_history(url)
         return links_found
 
     @staticmethod
     def _new_video_files(before: List[Path], after: List[Path]) -> List[Path]:
         known_paths = {str(path.resolve()) for path in before}
-        valid_exts = {".mp4", ".mkv", ".webm", ".mov"}
         created: List[Path] = []
         for path in after:
             if str(path.resolve()) in known_paths:
                 continue
-            if path.suffix.lower() not in valid_exts:
+            if path.suffix.lower() not in YTHandler.VIDEO_FILE_EXTENSIONS:
                 continue
             if path.suffix.lower() in {".part", ".ytdl"}:
                 continue
@@ -453,7 +550,90 @@ class YTHandler:
                 created.append(path)
         return created
 
-    def _probe_and_decide_format(self, target_url: str, ydl_opts: Dict[str, Any]) -> Tuple[str, str]:
+    def _probe_video_info(self, target_url: str) -> Dict[str, Any]:
+        probe_opts: Dict[str, Any] = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "ignoreconfig": True,
+            "logger": _SilentYDLLogger(),
+        }
+        if self._js_runtimes:
+            probe_opts["js_runtimes"] = dict(self._js_runtimes)
+            probe_opts["remote_components"] = ["ejs:github"]
+
+        last_error = "Unable to probe video metadata."
+        for strategy in self._download_strategies():
+            strategy_opts = self._configure_strategy_opts(probe_opts, strategy)
+            try:
+                with yt_dlp.YoutubeDL(strategy_opts) as ydl:
+                    info = ydl.extract_info(target_url, download=False)
+                if isinstance(info, dict):
+                    return info
+            except Exception as exc:
+                last_error = f"{strategy['name']}: {self._summarize_exception(exc)}"
+                continue
+
+        raise RuntimeError(last_error)
+
+    @staticmethod
+    def _probe_media_file(path: Path) -> Dict[str, Any]:
+        command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,codec_name",
+            "-of",
+            "json",
+            str(path),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        payload = json.loads(result.stdout or "{}")
+        streams = payload.get("streams", [])
+        if not isinstance(streams, list) or not streams:
+            raise RuntimeError("No video stream found in downloaded file.")
+
+        stream = streams[0] if isinstance(streams[0], dict) else {}
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+        codec = str(stream.get("codec_name") or "")
+        return {"width": width, "height": height, "codec": codec}
+
+    @staticmethod
+    def _quality_rank_from_dimensions(width: int, height: int) -> tuple[int, str]:
+        return classify_quality(width=width, height=height, format_note="")
+
+    def _validate_downloaded_file(
+        self,
+        downloaded: Path,
+        decision: FormatDecision,
+    ) -> Tuple[bool, Dict[str, Any], str]:
+        try:
+            media = self._probe_media_file(downloaded)
+        except Exception as exc:
+            return False, {"width": 0, "height": 0, "codec": ""}, self._summarize_exception(exc)
+
+        actual_rank, actual_label = self._quality_rank_from_dimensions(
+            width=int(media.get("width", 0)),
+            height=int(media.get("height", 0)),
+        )
+        media["quality_label"] = actual_label
+        media["quality_rank"] = actual_rank
+        if actual_rank < QUALITY_1080:
+            return False, media, "Downloaded file is below the 1080-class minimum quality floor."
+        if actual_rank < int(decision.quality_rank):
+            return (
+                False,
+                media,
+                f"Downloaded file did not meet the selected {decision.quality_label} quality class.",
+            )
+        return True, media, ""
+
+    def _probe_and_decide_format(self, target_url: str, ydl_opts: Dict[str, Any]) -> FormatDecision:
         probe_opts = dict(ydl_opts)
         probe_opts.update(
             {
@@ -466,9 +646,86 @@ class YTHandler:
         with yt_dlp.YoutubeDL(probe_opts) as ydl:
             info = ydl.extract_info(target_url, download=False)
         if not isinstance(info, dict):
-            return "bestvideo+bestaudio/best", "generic-fallback"
-        decision = choose_download_format(info)
-        return decision.format_string, decision.strategy
+            return FormatDecision(
+                format_string=None,
+                strategy="probe-no-info",
+                acceptable=False,
+                quality_rank=0,
+                quality_label="below-1080",
+                reason="Probe did not return video metadata.",
+            )
+        return choose_download_format(info)
+
+    def _matching_local_video_files(
+        self,
+        url: str,
+        directories: Sequence[Path],
+        filename_template: str,
+    ) -> List[Path]:
+        try:
+            info = self._probe_video_info(url)
+        except Exception as exc:
+            self.logger.warning("Failed to resolve local filenames for %s: %s", url, exc)
+            return []
+
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "ignoreconfig": True, "outtmpl": filename_template}) as ydl:
+                expected_stem = Path(ydl.prepare_filename({**info, "ext": "mp4"})).stem
+        except Exception as exc:
+            self.logger.warning("Failed to prepare expected filename for %s: %s", url, exc)
+            return []
+
+        matches: List[Path] = []
+        for directory in directories:
+            for path in Path(directory).glob(f"{expected_stem}.*"):
+                if path.suffix.lower() not in self.VIDEO_FILE_EXTENSIONS:
+                    continue
+                if path.is_file():
+                    matches.append(path)
+        return matches
+
+    def reset_recent_channel_history(
+        self,
+        *,
+        channels: Sequence[str],
+        hours_limit: int,
+        playlistend: int = 15,
+        replace_dirs: Sequence[Path] = (),
+        filename_template: str = "%(title).200B.%(ext)s",
+    ) -> Dict[str, Any]:
+        recent_links = self.list_recent_channel_links(
+            channels=channels,
+            hours_limit=hours_limit,
+            playlistend=playlistend,
+        )
+        removed_downloaded = self._remove_urls_from_history_file(self.download_history_file, recent_links)
+        removed_fetched = self._remove_urls_from_history_file(self.fetched_history_file, recent_links)
+
+        removed_files: List[str] = []
+        for url in recent_links:
+            for path in self._matching_local_video_files(url, directories=replace_dirs, filename_template=filename_template):
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception as exc:
+                    self.logger.warning("Failed to remove old source %s: %s", path, exc)
+                    continue
+                removed_files.append(str(path))
+
+        summary = {
+            "recent_links": recent_links,
+            "removed_from_download_history": removed_downloaded,
+            "removed_from_fetched_history": removed_fetched,
+            "removed_local_files": removed_files,
+        }
+        self.logger.info(
+            "Recent YouTube history reset completed: %s links, %s downloaded-history entries, "
+            "%s fetched-history entries, %s local files removed.",
+            len(recent_links),
+            removed_downloaded,
+            removed_fetched,
+            len(removed_files),
+        )
+        return summary
 
     def download_video(
         self,
@@ -486,7 +743,6 @@ class YTHandler:
         before_files = list(output_dir.glob("*"))
 
         base_opts: Dict[str, Any] = {
-            "merge_output_format": "mp4",
             "outtmpl": str(output_dir / filename_template),
             "quiet": True,
             "noprogress": True,
@@ -503,50 +759,18 @@ class YTHandler:
             "allow_unplayable_formats": False,
             "ignoreconfig": True,
             "noplaylist": True,
-            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
             "logger": _SilentYDLLogger(),
         }
         if self._js_runtimes:
             base_opts["js_runtimes"] = dict(self._js_runtimes)
             base_opts["remote_components"] = ["ejs:github"]
 
-        strategies: List[Dict[str, Any]] = [
-            {
-                "name": "cookies-mobile-tv",
-                "use_cookies": True,
-                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded", "web"]}},
-            },
-            {
-                "name": "cookies-web-default",
-                "use_cookies": True,
-                "extractor_args": {"youtube": {"player_client": ["web", "web_safari", "tv_downgraded"]}},
-            },
-            {
-                "name": "no-cookies-mobile-tv",
-                "use_cookies": False,
-                "extractor_args": {"youtube": {"player_client": ["android", "tv_downgraded"]}},
-            },
-            {
-                "name": "no-cookies-generic",
-                "use_cookies": False,
-            },
-        ]
-
         last_error = "All download strategies failed."
-        for strategy in strategies:
-            ydl_opts = dict(base_opts)
-            if strategy.get("extractor_args"):
-                ydl_opts["extractor_args"] = strategy["extractor_args"]
-
-            if strategy.get("use_cookies", True):
-                self._apply_cookies_to_opts(ydl_opts)
-            else:
-                ydl_opts.pop("cookiefile", None)
-                ydl_opts.pop("cookiesfrombrowser", None)
+        for strategy in self._download_strategies():
+            ydl_opts = self._configure_strategy_opts(base_opts, strategy)
 
             try:
-                selected_format, format_strategy = self._probe_and_decide_format(target_url, ydl_opts)
-                ydl_opts["format"] = selected_format
+                decision = self._probe_and_decide_format(target_url, ydl_opts)
             except Exception as exc:
                 error_summary = self._summarize_exception(exc)
                 self.logger.warning(
@@ -556,14 +780,36 @@ class YTHandler:
                     error_summary,
                 )
                 last_error = f"{strategy['name']}: {error_summary}"
-                ydl_opts["format"] = "bestvideo+bestaudio/best"
-                format_strategy = "generic-fallback"
+                continue
+
+            if not decision.acceptable or not decision.format_string:
+                self.logger.info(
+                    "Skipping strategy '%s' for %s because best result was rejected: %s "
+                    "(format_id=%s, %sx%s, vcodec=%s, source=%s)",
+                    strategy["name"],
+                    target_url,
+                    decision.reason or decision.strategy,
+                    decision.format_id or "unknown",
+                    decision.width,
+                    decision.height,
+                    decision.vcodec or "unknown",
+                    decision.source_type or "unknown",
+                )
+                last_error = f"{strategy['name']}: {decision.reason or 'no acceptable format found'}"
+                continue
+
+            ydl_opts["format"] = str(decision.format_string)
 
             self.logger.info(
-                "Downloading with %s (%s): %s",
+                "Downloading with %s (%s): %s [format_id=%s, %sx%s, vcodec=%s, source=%s]",
                 strategy["name"],
-                format_strategy,
+                decision.strategy,
                 target_url,
+                decision.format_id or "unknown",
+                decision.width,
+                decision.height,
+                decision.vcodec or "unknown",
+                decision.source_type or "unknown",
             )
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -602,6 +848,26 @@ class YTHandler:
                 self.logger.warning("Downloaded file too small (%s bytes): %s", size, downloaded.name)
                 downloaded.unlink(missing_ok=True)
                 last_error = f"{strategy['name']}: downloaded file too small ({size} bytes)"
+                continue
+
+            valid_file, media, validation_error = self._validate_downloaded_file(downloaded, decision)
+            self.logger.info(
+                "Validated downloaded file %s: %sx%s %s (%s)",
+                downloaded.name,
+                int(media.get("width", 0)),
+                int(media.get("height", 0)),
+                str(media.get("codec", "") or "unknown"),
+                str(media.get("quality_label", "unknown")),
+            )
+            if not valid_file:
+                self.logger.warning(
+                    "Discarding %s from strategy '%s': %s",
+                    downloaded.name,
+                    strategy["name"],
+                    validation_error,
+                )
+                downloaded.unlink(missing_ok=True)
+                last_error = f"{strategy['name']}: {validation_error}"
                 continue
 
             self._add_to_download_history(target_url)
