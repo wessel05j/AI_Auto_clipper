@@ -12,6 +12,13 @@ logs/*.log
 config/*.json
 !config/.gitkeep
 !logs/.gitkeep
+
+# Internal diagnostic/test harness files
+scripts/run_clip_diagnostic.py
+tests/test_ai_pipeline.py
+tests/test_anchor_assembly.py
+tests/test_diagnostics.py
+
 # (Optional) Uncomment more rules if desired
 # output/
 # system/*.json

@@ -78,20 +78,20 @@ Notes:
 - On macOS/Linux, run via the commands above.
 
 ## First Run Experience
-1. 🚀 Runtime layout is prepared (`input/`, `output/`, `temp/`, `config/`, `logs/`, `system/`).
-2. 🔍 Config is validated (`config/config.json`).
-3. 🧙 If config is missing/invalid, Setup Wizard launches automatically.
-4. 📊 Dashboard opens after setup and lets you launch clipping, edit settings, manage queues, and view logs.
+1. Runtime layout is prepared (`input/`, `output/`, `temp/`, `config/`, `logs/`, `system/`).
+2. Config is validated (`config/config.json`).
+3. If config is missing or invalid, Setup Wizard launches automatically.
+4. Dashboard opens after setup and lets you launch clipping, edit settings, manage queues, and view logs.
 
 ## How Clipping Works
-1. 📥 Optional YouTube download from queued links and/or channel fetch.
-2. 📝 Whisper transcription turns video audio into timestamped transcript segments.
-3. 🧩 Transcript chunking keeps prompt size within token budget.
-4. 🤖 AI clipping scans chunks (plus optional bridge chunks) using Ollama.
-5. 🔗 Segment merge combines nearby candidates using `merge_distance_seconds`.
-6. ✅ Duration filtering enforces constraints (including "at least X seconds" from your query).
-7. ✂️ Clip extraction writes final `.mp4` clips to output.
-8. 📦 Source video is archived to `temp/` and cleanup policy is applied.
+1. Optional YouTube download from queued links and/or channel fetch.
+2. Whisper transcription turns video audio into timestamped transcript segments.
+3. Transcript chunking keeps prompt size within token budget.
+4. AI clipping scans chunks (plus optional bridge chunks) using Ollama.
+5. Anchor assembly groups only nearby candidates when the transcript remains contiguous, then expands to natural transcript boundaries. The existing `merge_distance_seconds` setting now acts as a soft assembly-gap limit instead of a blind merge window.
+6. Duration filtering enforces constraints, including explicit minimums such as "at least 45 seconds" from your query.
+7. Clip extraction writes final `.mp4` clips to output.
+8. Source video is archived to `temp/` and cleanup policy is applied.
 
 ## Architecture (Professional Overview)
 
@@ -106,13 +106,13 @@ Notes:
   - Config validation + migration fallback.
   - Starts Setup Wizard or Dashboard.
 - `core/engine.py`: runtime orchestrator.
-  - Download -> transcribe -> chunk -> AI scan -> merge -> filter -> extract -> archive.
+  - Download -> transcribe -> chunk -> AI scan -> anchor assembly -> filter -> extract -> archive.
   - Writes live progress to `system/status.json`.
   - Handles temporary cleanup and resource offload (Whisper + CUDA + Ollama).
 - `core/ai_pipeline.py`: Ollama chat layer.
   - Chunk scanner with retries and strict parsing.
   - JSON cleaning/repair fallback for resilient outputs.
-- `core/clipping.py`: transcript merge and final video cutting with FFmpeg stream-copy trimming.
+- `core/clipping.py`: anchor clustering, transcript-boundary expansion, and final video cutting with FFmpeg stream-copy trimming.
 - `core/yt_handler.py`: YouTube ingestion.
   - URL normalization, channel RSS fetch, history tracking.
   - Multi-strategy yt-dlp download with format probing.

@@ -7,6 +7,7 @@ import re
 from typing import Any, Callable, List, Optional, Sequence
 
 import requests
+from utils.diagnostics import DiagnosticRecorder
 
 
 try:
@@ -23,7 +24,8 @@ HARD_JSON_GUARDRAIL = (
     "- No markdown fences, no prose, no notes.\n"
     "- Each item must be exactly [start, end, score].\n"
     "- start/end/score must be numeric.\n"
-    "- If no valid clips exist, return []."
+    "- If no valid clips exist, return [].\n"
+    "- Never return a blank response, {}, null, or any JSON object."
 )
 
 RELEVANCE_GUARDRAIL = (
@@ -35,11 +37,22 @@ RELEVANCE_GUARDRAIL = (
     "- For 'at least X seconds', treat X as a minimum floor, not an exact target."
 )
 
+SPAN_GUARDRAIL = (
+    "SPAN CONTRACT:\n"
+    "- Every returned clip must already be one continuous self-contained passage.\n"
+    "- The whole returned span must match the user query, not just one sentence inside it.\n"
+    "- Prefer one strong complete passage over several tiny highlight fragments.\n"
+    "- Do not return narrow fragments that would need downstream merging to make sense.\n"
+    "- Prefer start/end points that align to transcript segment boundaries and natural pauses."
+)
+
 NUMERIC_TRIPLE_PATTERN = re.compile(
     r"\[\s*[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*,\s*"
     r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*,\s*"
     r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*\]"
 )
+
+NO_MATCH_OBJECT_KEYS = ("clips", "matches", "candidates", "results", "items", "output")
 
 
 def estimate_tokens(text: str) -> int:
@@ -54,6 +67,26 @@ def estimate_tokens(text: str) -> int:
 
 def _segment_tokens(start: float, end: float, text: str) -> int:
     return estimate_tokens(f"{start} {end} {text}")
+
+
+def _format_timestamp(value: Any) -> str:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = 0.0
+    return f"{numeric:.3f}"
+
+
+def _serialize_chunk_for_model(chunk: Sequence[Sequence[Any]]) -> str:
+    lines: List[str] = []
+    for index, segment in enumerate(chunk, start=1):
+        if len(segment) < 3:
+            continue
+        text = " ".join(str(segment[2]).split())
+        lines.append(
+            f"{index:03d} | {_format_timestamp(segment[0])} | {_format_timestamp(segment[1])} | {text}"
+        )
+    return "\n".join(lines)
 
 
 def _normalize_timed_words(segment: Sequence[Any]) -> List[List[Any]]:
@@ -228,11 +261,8 @@ def chunk_transcript(
     return overlapped_chunks
 
 
-def _clean_model_output(raw_text: str) -> str:
-    cleaned = raw_text.strip()
-    if not cleaned:
-        raise ValueError("Model returned empty response.")
-
+def _strip_model_output(raw_text: str) -> str:
+    cleaned = str(raw_text or "").strip()
     if "</think>" in cleaned:
         cleaned = cleaned.rsplit("</think>", maxsplit=1)[-1].strip()
 
@@ -243,6 +273,49 @@ def _clean_model_output(raw_text: str) -> str:
     if cleaned.lower().startswith("json"):
         cleaned = cleaned[4:].strip()
     return cleaned
+
+
+def _clean_model_output(raw_text: str) -> str:
+    cleaned = _strip_model_output(raw_text)
+    if not cleaned:
+        raise ValueError("Model returned empty response.")
+    return cleaned
+
+
+def _normalize_no_match_response(raw_text: str) -> tuple[str, str]:
+    cleaned = _strip_model_output(raw_text)
+    if not cleaned:
+        return "[]", "empty_response"
+
+    try:
+        payload = json.loads(cleaned)
+    except Exception:
+        lowered = cleaned.lower()
+        if lowered in {"{}", "null", "none"}:
+            return "[]", "explicit_no_match_token"
+        return cleaned, ""
+
+    if payload is None:
+        return "[]", "null_payload"
+
+    if isinstance(payload, dict):
+        if not payload:
+            return "[]", "empty_object"
+
+        for key in NO_MATCH_OBJECT_KEYS:
+            if key not in payload:
+                continue
+            value = payload.get(key)
+            if value is None or value == []:
+                return "[]", f"{key}_empty"
+            if isinstance(value, list):
+                return json.dumps(value, ensure_ascii=True), f"{key}_unwrapped"
+
+        text_values = " ".join(str(value).strip().lower() for value in payload.values() if value is not None)
+        if any(token in text_values for token in ("no clip", "no clips", "no match", "nothing found", "none found")):
+            return "[]", "no_match_message"
+
+    return cleaned, ""
 
 
 def _extract_json_text(raw_text: str) -> str:
@@ -339,7 +412,8 @@ def _parse_from_numeric_triples(cleaned: str) -> List[List[float]]:
 
 
 def parse_clip_response(raw_text: str) -> List[List[float]]:
-    cleaned = _clean_model_output(raw_text)
+    normalized_raw_text, _ = _normalize_no_match_response(raw_text)
+    cleaned = _clean_model_output(normalized_raw_text)
     parse_errors: List[str] = []
 
     candidates: List[str] = [cleaned]
@@ -381,6 +455,7 @@ class AIPipeline:
         max_output_tokens: int,
         max_context_tokens: int,
         logger: logging.Logger,
+        diagnostics: Optional[DiagnosticRecorder] = None,
     ) -> None:
         self.model = model
         self.ollama_url = ollama_url.rstrip("/")
@@ -389,6 +464,7 @@ class AIPipeline:
         self.max_output_tokens = max_output_tokens
         self.max_context_tokens = max_context_tokens
         self.logger = logger
+        self.diagnostics = diagnostics
 
     def _resolve_think_setting(self) -> Any:
         """
@@ -397,13 +473,13 @@ class AIPipeline:
         """
         return "low"
 
-    def _chat(
+    def _build_chat_payload(
         self,
         prompt: str,
         system_message: str,
         force_json: bool = False,
         num_predict_override: Optional[int] = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         temperature = self.temperature if not force_json else min(self.temperature, 0.15)
         predict_tokens = int(num_predict_override or self.max_output_tokens)
         predict_tokens = max(32, predict_tokens)
@@ -423,6 +499,9 @@ class AIPipeline:
         }
         if force_json:
             payload["format"] = "json"
+        return payload
+
+    def _chat_payload(self, payload: dict[str, Any]) -> str:
 
         endpoint = f"{self.ollama_url}/api/chat"
         response = requests.post(
@@ -449,50 +528,119 @@ class AIPipeline:
             content = str(body.get("response", "")).strip()
         return content
 
-    def _scan_chunk_once(
+    def _build_scan_request(
         self,
         chunk: Sequence[Sequence[Any]],
         user_query: str,
         strict_mode: bool = False,
-    ) -> str:
+    ) -> tuple[str, str, dict[str, Any]]:
         chunking_context = (
             "Chunking context:\n"
             "- You are seeing one chunk from a larger transcript.\n"
-            "- Avoid selecting clips from trailing chunk edges if context appears incomplete.\n"
+            "- Avoid selecting clips from leading or trailing chunk edges if context appears incomplete.\n"
             "- Output only JSON."
         )
+        serialized_chunk = _serialize_chunk_for_model(chunk)
+        chunk_start = _format_timestamp(chunk[0][0]) if chunk else "0.000"
+        chunk_end = _format_timestamp(chunk[-1][1]) if chunk else "0.000"
         prompt = (
-            f"Transcript JSON chunk:\n{json.dumps(chunk, ensure_ascii=True)}\n\n"
+            "Transcript chunk metadata:\n"
+            f"- Chunk start: {chunk_start}\n"
+            f"- Chunk end: {chunk_end}\n"
+            f"- Segment count: {len(chunk)}\n"
+            "- Transcript lines use the format: segment_id | start | end | text\n\n"
+            f"Transcript chunk:\n{serialized_chunk}\n\n"
             f"User query:\n{user_query}\n\n"
+            "Selection rules:\n"
+            "- Return spans that work as complete clips on their own.\n"
+            "- Prefer broader continuous passages over isolated standout lines.\n"
+            "- Avoid returning several tiny fragments from the same thought.\n"
+            "- Use the provided timestamps as the clip boundaries you return.\n"
+            "- If nothing in this chunk qualifies, return [].\n\n"
             "Return only JSON list of clips: [[start, end, score], ...]."
         )
-        system_message = f"{self.system_prompt}\n\n{chunking_context}\n\n{RELEVANCE_GUARDRAIL}"
+        system_message = (
+            f"{self.system_prompt}\n\n{chunking_context}\n\n{RELEVANCE_GUARDRAIL}\n\n{SPAN_GUARDRAIL}"
+        )
         if strict_mode:
             system_message = f"{system_message}\n\n{HARD_JSON_GUARDRAIL}"
-        return self._chat(
+        payload = self._build_chat_payload(
             prompt=prompt,
             system_message=system_message,
             force_json=strict_mode,
             num_predict_override=min(self.max_output_tokens, 220),
         )
+        return prompt, system_message, payload
+
+    def _record_scan_attempt(
+        self,
+        chunk: Sequence[Sequence[Any]],
+        *,
+        prompt: str,
+        system_message: str,
+        request_payload: dict[str, Any],
+        diagnostic_context: Optional[dict[str, Any]],
+        attempt_index: int,
+        strict_mode: bool,
+        status: str,
+        raw_response: str,
+        parsed_output: Optional[Sequence[Sequence[float]]] = None,
+        error: str = "",
+        response_normalization: str = "",
+    ) -> None:
+        if self.diagnostics is None or not self.diagnostics.enabled or not diagnostic_context:
+            return
+        video_name = str(diagnostic_context.get("video_name", "")).strip()
+        if not video_name:
+            return
+        payload = {
+            "chunk_index": int(diagnostic_context.get("chunk_index", 0) or 0),
+            "loop_index": int(diagnostic_context.get("loop_index", 0) or 0),
+            "attempt_index": int(attempt_index),
+            "strict_mode": bool(strict_mode),
+            "status": status,
+            "error": str(error or ""),
+            "raw_response": str(raw_response or ""),
+            "parsed_output": [list(row) for row in (parsed_output or [])],
+            "chunk": [list(row) for row in chunk],
+            "prompt": prompt,
+            "system_message": system_message,
+            "request_payload": request_payload,
+            "response_normalization": str(response_normalization or ""),
+        }
+        self.diagnostics.record_scan_attempt(video_name=video_name, payload=payload)
 
     def scan_chunk_with_retries(
         self,
         chunk: Sequence[Sequence[Any]],
         user_query: str,
         max_retries: int = 3,
+        diagnostic_context: Optional[dict[str, Any]] = None,
     ) -> List[List[float]]:
         prompt_hint = ""
         for attempt in range(1, max_retries + 1):
             strict_mode = attempt > 1
+            prompt, system_message, request_payload = self._build_scan_request(
+                chunk=chunk,
+                user_query=f"{user_query}\n{prompt_hint}".strip(),
+                strict_mode=strict_mode,
+            )
             try:
-                raw = self._scan_chunk_once(
-                    chunk,
-                    f"{user_query}\n{prompt_hint}".strip(),
-                    strict_mode=strict_mode,
-                )
+                raw = self._chat_payload(request_payload)
             except Exception as exc:
                 self.logger.warning("Ollama request failed on attempt %s: %s", attempt, exc)
+                self._record_scan_attempt(
+                    chunk,
+                    prompt=prompt,
+                    system_message=system_message,
+                    request_payload=request_payload,
+                    diagnostic_context=diagnostic_context,
+                    attempt_index=attempt,
+                    strict_mode=strict_mode,
+                    status="request_error",
+                    raw_response="",
+                    error=str(exc),
+                )
                 prompt_hint = (
                     "Previous request failed. Follow the non-negotiable JSON output contract exactly."
                 )
@@ -504,14 +652,49 @@ class AIPipeline:
                 len(raw),
                 raw[:2500],
             )
+            normalized_raw, normalization_reason = _normalize_no_match_response(raw)
+            if normalization_reason:
+                self.logger.debug(
+                    "Normalized model response to []/array on attempt %s via %s.",
+                    attempt,
+                    normalization_reason,
+                )
 
             try:
-                return parse_clip_response(raw)
+                parsed = parse_clip_response(normalized_raw)
+                self._record_scan_attempt(
+                    chunk,
+                    prompt=prompt,
+                    system_message=system_message,
+                    request_payload=request_payload,
+                    diagnostic_context=diagnostic_context,
+                    attempt_index=attempt,
+                    strict_mode=strict_mode,
+                    status="success",
+                    raw_response=raw,
+                    parsed_output=parsed,
+                    response_normalization=normalization_reason,
+                )
+                return parsed
             except Exception as exc:
                 self.logger.warning("Failed to parse AI response on attempt %s: %s", attempt, exc)
+                self._record_scan_attempt(
+                    chunk,
+                    prompt=prompt,
+                    system_message=system_message,
+                    request_payload=request_payload,
+                    diagnostic_context=diagnostic_context,
+                    attempt_index=attempt,
+                    strict_mode=strict_mode,
+                    status="parse_error",
+                    raw_response=raw,
+                    error=str(exc),
+                    response_normalization=normalization_reason,
+                )
                 prompt_hint = (
                     "Your previous response violated the format. "
-                    "Return exactly one valid JSON array with schema: [[start, end, score], ...]."
+                    "Return exactly one valid JSON array with schema: [[start, end, score], ...]. "
+                    "If no clip qualifies, return [] exactly."
                 )
                 continue
 

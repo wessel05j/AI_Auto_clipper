@@ -21,7 +21,8 @@ MIN_THINKING_B = 8.0
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert transcript clip selector for the users request.\n"
     "Input:\n"
-    "- JSON transcript: [[start, end, \"text\"], ...] with start/end in seconds.\n\n"
+    "- Transcript chunk lines formatted as: segment_id | start | end | text\n"
+    "- start/end values are in seconds.\n\n"
     "OUTPUT ONLY (STRICT):\n"
     "- ONLY JSON: [[start1, end1, score1], [start2, end2, score2], ...]\n"
     "- The third element is how well the clip matches the user query "
@@ -33,6 +34,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Prefer natural pauses and paragraph boundaries for cut points.\n"
     "- Prefer context-rich clips that clearly match the user query.\n"
     "- If no segments match the query, return an empty list: [].\n"
+    "- Never return a blank response, {}, null, or any JSON object.\n"
 )
 
 DEFAULT_USER_QUERY = (

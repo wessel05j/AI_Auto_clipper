@@ -3,13 +3,20 @@ from __future__ import annotations
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Optional
 
 
-def setup_logging(base_dir: Path, log_level: str = "INFO", dev_mode: bool = False) -> logging.Logger:
+def setup_logging(
+    base_dir: Path,
+    log_level: str = "INFO",
+    dev_mode: bool = False,
+    log_file: Optional[Path] = None,
+) -> logging.Logger:
     """Configure root logger for file + terminal output."""
     logs_dir = base_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file = logs_dir / "app.log"
+    resolved_log_file = Path(log_file) if log_file is not None else logs_dir / "app.log"
+    resolved_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     effective_level_name = "DEBUG" if dev_mode else log_level.upper()
     effective_level = getattr(logging, effective_level_name, logging.INFO)
@@ -25,7 +32,7 @@ def setup_logging(base_dir: Path, log_level: str = "INFO", dev_mode: bool = Fals
     )
 
     file_handler = RotatingFileHandler(
-        filename=log_file,
+        filename=resolved_log_file,
         maxBytes=2_000_000,
         backupCount=3,
         encoding="utf-8",

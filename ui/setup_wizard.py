@@ -327,11 +327,11 @@ class SetupWizard:
         if not user_query:
             user_query = default_user_query
         self._show_setting_help(
-            name="Merge Distance",
-            behavior="Maximum time gap allowed when combining nearby candidate segments.",
-            impact="Higher values produce longer merged clips; lower values keep clips tighter but can split good moments.",
+            name="Assembly Gap",
+            behavior="Soft upper bound for grouping nearby AI anchor moments before transcript-boundary expansion.",
+            impact="Higher values allow slightly wider continuous passages when speech stays contiguous. Lower values keep clips stricter and reduce over-joining.",
         )
-        merge_distance_seconds = IntPrompt.ask("Merge distance in seconds", default=20, show_default=True)
+        merge_distance_seconds = IntPrompt.ask("Assembly gap in seconds", default=20, show_default=True)
         self._show_setting_help(
             name="AI Loops",
             behavior="How many AI clipping loops run per chunk.",

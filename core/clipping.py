@@ -9,10 +9,28 @@ import shutil
 import subprocess
 import warnings
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+STRONG_SENTENCE_END = re.compile(r"[\.!\?]+(?:\"|'|\s|$)")
+CONTINUATION_START = re.compile(
+    r"^(?:and|but|so|because|then|or|if|when|which|that|like|also|still|plus|well|cause|cuz|anyway|anyways)\b",
+    re.IGNORECASE,
+)
+LOW_CONTENT_SEGMENTS = {
+    "yeah",
+    "yep",
+    "okay",
+    "ok",
+    "alright",
+    "all right",
+    "right",
+    "thank you",
+    "very good",
+    "exactly",
+    "for sure",
+}
 
 
 def _extract_timed_words(segment: object) -> List[List[object]]:
@@ -94,8 +112,6 @@ def transcribe_video(
                 logger.info("Whisper is using FP32 on CPU.")
             else:
                 logger.warning("Whisper warning: %s", warning_text)
-    strong_end = re.compile(r"[\.!\?]+(?:\"|'|\s|$)")
-
     merged: List[List[object]] = []
     current = None
 
@@ -118,7 +134,7 @@ def transcribe_video(
             continue
 
         pause = start - float(current["end"])
-        has_sentence_end = bool(strong_end.search(str(current["text"])))
+        has_sentence_end = bool(STRONG_SENTENCE_END.search(str(current["text"])))
 
         if has_sentence_end or pause >= min_pause:
             item = [
@@ -156,6 +172,421 @@ def transcribe_video(
         merged.append(item)
 
     return merged
+
+
+def _segment_word_bounds(segment: Sequence[Any]) -> Tuple[float, float]:
+    start = float(segment[0])
+    end = float(segment[1])
+    if len(segment) >= 4 and isinstance(segment[3], list) and segment[3]:
+        first = next((word for word in segment[3] if isinstance(word, (list, tuple)) and len(word) >= 2), None)
+        last = next(
+            (
+                word
+                for word in reversed(segment[3])
+                if isinstance(word, (list, tuple)) and len(word) >= 2
+            ),
+            None,
+        )
+        try:
+            if first is not None:
+                start = float(first[0])
+            if last is not None:
+                end = float(last[1])
+        except (TypeError, ValueError):
+            pass
+    if end < start:
+        end = start
+    return start, end
+
+
+def _normalize_transcript_segments(transcript: Sequence[Sequence[Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for index, segment in enumerate(transcript):
+        if len(segment) < 3:
+            continue
+        try:
+            start = float(segment[0])
+            end = float(segment[1])
+        except (TypeError, ValueError):
+            continue
+        boundary_start, boundary_end = _segment_word_bounds(segment)
+        text = str(segment[2]).strip()
+        word_count = len(text.split())
+        normalized.append(
+            {
+                "index": index,
+                "raw": list(segment),
+                "start": start,
+                "end": end,
+                "boundary_start": boundary_start,
+                "boundary_end": boundary_end,
+                "duration": max(0.0, end - start),
+                "text": text,
+                "word_count": word_count,
+            }
+        )
+    return normalized
+
+
+def _segment_text_is_fragment(segment: Dict[str, Any]) -> bool:
+    text = str(segment.get("text", "")).strip()
+    if not text:
+        return True
+    normalized = re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
+    word_count = int(segment.get("word_count", 0))
+    duration = float(segment.get("duration", 0.0))
+    if normalized in LOW_CONTENT_SEGMENTS:
+        return True
+    if word_count <= 2:
+        return True
+    if duration < 1.4 and word_count <= 4:
+        return True
+    return False
+
+
+def _starts_with_continuation(text: str) -> bool:
+    return bool(CONTINUATION_START.search(str(text or "").strip()))
+
+
+def _ends_with_sentence(text: str) -> bool:
+    return bool(STRONG_SENTENCE_END.search(str(text or "").strip()))
+
+
+def _adjacent_gap_seconds(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    return max(0.0, float(right["start"]) - float(left["end"]))
+
+
+def _segments_are_contiguous(
+    transcript: Sequence[Dict[str, Any]],
+    left_index: int,
+    right_index: int,
+    *,
+    pause_limit_seconds: float,
+) -> bool:
+    if right_index <= left_index:
+        return True
+    for index in range(left_index + 1, right_index + 1):
+        gap = _adjacent_gap_seconds(transcript[index - 1], transcript[index])
+        if gap > pause_limit_seconds:
+            return False
+    return True
+
+
+def _candidate_segment_range(
+    transcript: Sequence[Dict[str, Any]],
+    start_time: float,
+    end_time: float,
+) -> Optional[Tuple[int, int]]:
+    overlapping: List[int] = []
+    for index, segment in enumerate(transcript):
+        if float(segment["end"]) <= start_time + 1e-6:
+            continue
+        if float(segment["start"]) >= end_time - 1e-6:
+            if overlapping:
+                break
+            continue
+        overlapping.append(index)
+
+    if overlapping:
+        return overlapping[0], overlapping[-1]
+
+    midpoint = max(0.0, (float(start_time) + float(end_time)) / 2.0)
+    nearest_index: Optional[int] = None
+    nearest_distance: Optional[float] = None
+    for index, segment in enumerate(transcript):
+        center = (float(segment["start"]) + float(segment["end"])) / 2.0
+        distance = abs(center - midpoint)
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_distance = distance
+            nearest_index = index
+    if nearest_index is None:
+        return None
+    return nearest_index, nearest_index
+
+
+def _normalize_anchor_candidates(
+    transcript: Sequence[Dict[str, Any]],
+    candidates: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            start = float(candidate.get("start"))
+            end = float(candidate.get("end"))
+            score = float(candidate.get("score", 5.0))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        segment_range = _candidate_segment_range(transcript, start, end)
+        if segment_range is None:
+            continue
+        start_index, end_index = segment_range
+        normalized.append(
+            {
+                **candidate,
+                "start": start,
+                "end": end,
+                "score": score,
+                "start_index": start_index,
+                "end_index": end_index,
+            }
+        )
+
+    normalized.sort(key=lambda item: (float(item["start"]), float(item["end"]), -float(item["score"])))
+    return normalized
+
+
+def _candidate_can_join_cluster(
+    transcript: Sequence[Dict[str, Any]],
+    cluster: Dict[str, Any],
+    candidate: Dict[str, Any],
+    *,
+    anchor_gap_limit_seconds: float,
+    pause_limit_seconds: float,
+) -> bool:
+    cluster_end_time = float(cluster["anchor_end"])
+    candidate_start_time = float(candidate["start"])
+    if candidate_start_time <= cluster_end_time + 1e-6:
+        return True
+    if (candidate_start_time - cluster_end_time) > anchor_gap_limit_seconds:
+        return False
+    return _segments_are_contiguous(
+        transcript,
+        int(cluster["anchor_end_index"]),
+        int(candidate["start_index"]),
+        pause_limit_seconds=pause_limit_seconds,
+    )
+
+
+def _build_anchor_clusters(
+    transcript: Sequence[Dict[str, Any]],
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    merge_distance_seconds: float,
+) -> List[Dict[str, Any]]:
+    normalized_candidates = _normalize_anchor_candidates(transcript, candidates)
+    if not normalized_candidates:
+        return []
+
+    anchor_gap_limit_seconds = min(max(1.0, float(merge_distance_seconds) * 0.2), 4.0)
+    pause_limit_seconds = min(1.25, max(0.75, anchor_gap_limit_seconds))
+
+    clusters: List[Dict[str, Any]] = []
+    for candidate in normalized_candidates:
+        if not clusters:
+            clusters.append(
+                {
+                    "anchor_start": float(candidate["start"]),
+                    "anchor_end": float(candidate["end"]),
+                    "anchor_start_index": int(candidate["start_index"]),
+                    "anchor_end_index": int(candidate["end_index"]),
+                    "score": float(candidate["score"]),
+                    "sources": [dict(candidate)],
+                }
+            )
+            continue
+
+        current_cluster = clusters[-1]
+        if _candidate_can_join_cluster(
+            transcript,
+            current_cluster,
+            candidate,
+            anchor_gap_limit_seconds=anchor_gap_limit_seconds,
+            pause_limit_seconds=pause_limit_seconds,
+        ):
+            current_cluster["anchor_end"] = max(float(current_cluster["anchor_end"]), float(candidate["end"]))
+            current_cluster["anchor_end_index"] = max(
+                int(current_cluster["anchor_end_index"]),
+                int(candidate["end_index"]),
+            )
+            current_cluster["score"] = max(float(current_cluster["score"]), float(candidate["score"]))
+            current_cluster["sources"].append(dict(candidate))
+        else:
+            clusters.append(
+                {
+                    "anchor_start": float(candidate["start"]),
+                    "anchor_end": float(candidate["end"]),
+                    "anchor_start_index": int(candidate["start_index"]),
+                    "anchor_end_index": int(candidate["end_index"]),
+                    "score": float(candidate["score"]),
+                    "sources": [dict(candidate)],
+                }
+            )
+    return clusters
+
+
+def _clip_duration_from_segments(
+    transcript: Sequence[Dict[str, Any]],
+    start_index: int,
+    end_index: int,
+) -> float:
+    start = float(transcript[start_index]["boundary_start"])
+    end = float(transcript[end_index]["boundary_end"])
+    return max(0.0, end - start)
+
+
+def _should_expand_left(
+    transcript: Sequence[Dict[str, Any]],
+    start_index: int,
+    end_index: int,
+    *,
+    min_duration_seconds: float,
+    pause_limit_seconds: float,
+) -> bool:
+    if start_index <= 0:
+        return False
+    previous = transcript[start_index - 1]
+    current = transcript[start_index]
+    if _adjacent_gap_seconds(previous, current) > pause_limit_seconds:
+        return False
+
+    current_duration = _clip_duration_from_segments(transcript, start_index, end_index)
+    if _segment_text_is_fragment(current) or _starts_with_continuation(str(current["text"])):
+        return True
+    if not _ends_with_sentence(str(previous["text"])):
+        return True
+    if min_duration_seconds > 0 and current_duration < min_duration_seconds:
+        return True
+    return False
+
+
+def _should_expand_right(
+    transcript: Sequence[Dict[str, Any]],
+    start_index: int,
+    end_index: int,
+    *,
+    min_duration_seconds: float,
+    pause_limit_seconds: float,
+) -> bool:
+    if end_index >= len(transcript) - 1:
+        return False
+    current = transcript[end_index]
+    following = transcript[end_index + 1]
+    if _adjacent_gap_seconds(current, following) > pause_limit_seconds:
+        return False
+
+    current_duration = _clip_duration_from_segments(transcript, start_index, end_index)
+    if _segment_text_is_fragment(current) or not _ends_with_sentence(str(current["text"])):
+        return True
+    if min_duration_seconds > 0 and current_duration < min_duration_seconds:
+        return True
+    return False
+
+
+def _expand_cluster_to_transcript_boundaries(
+    transcript: Sequence[Dict[str, Any]],
+    cluster: Dict[str, Any],
+    *,
+    min_duration_seconds: float,
+    pause_limit_seconds: float,
+) -> Tuple[int, int]:
+    start_index = int(cluster["anchor_start_index"])
+    end_index = int(cluster["anchor_end_index"])
+    max_expansions = max(8, int(min_duration_seconds / 6.0) + 4 if min_duration_seconds > 0 else 8)
+    expansions = 0
+
+    while expansions < max_expansions:
+        changed = False
+        if _should_expand_left(
+            transcript,
+            start_index,
+            end_index,
+            min_duration_seconds=min_duration_seconds,
+            pause_limit_seconds=pause_limit_seconds,
+        ):
+            start_index -= 1
+            expansions += 1
+            changed = True
+        if _should_expand_right(
+            transcript,
+            start_index,
+            end_index,
+            min_duration_seconds=min_duration_seconds,
+            pause_limit_seconds=pause_limit_seconds,
+        ):
+            end_index += 1
+            expansions += 1
+            changed = True
+        if not changed:
+            break
+    return start_index, end_index
+
+
+def assemble_anchor_clips(
+    transcript: Sequence[Sequence[Any]],
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    merge_distance_seconds: float,
+    min_duration_seconds: float = 0.0,
+) -> Tuple[List[List[float]], List[Dict[str, Any]]]:
+    normalized_transcript = _normalize_transcript_segments(transcript)
+    if not normalized_transcript:
+        return [], []
+
+    clusters = _build_anchor_clusters(
+        normalized_transcript,
+        candidates,
+        merge_distance_seconds=merge_distance_seconds,
+    )
+    if not clusters:
+        return [], []
+
+    pause_limit_seconds = min(1.25, max(0.75, float(merge_distance_seconds) * 0.2))
+    assembled_clips: List[List[float]] = []
+    cluster_details: List[Dict[str, Any]] = []
+
+    for cluster_index, cluster in enumerate(clusters, start=1):
+        start_index, end_index = _expand_cluster_to_transcript_boundaries(
+            normalized_transcript,
+            cluster,
+            min_duration_seconds=min_duration_seconds,
+            pause_limit_seconds=pause_limit_seconds,
+        )
+        start_segment = normalized_transcript[start_index]
+        end_segment = normalized_transcript[end_index]
+        if _segment_text_is_fragment(start_segment) or _segment_text_is_fragment(end_segment):
+            continue
+        if _starts_with_continuation(str(start_segment["text"])) or not _ends_with_sentence(str(end_segment["text"])):
+            continue
+
+        start = float(start_segment["boundary_start"])
+        end = float(end_segment["boundary_end"])
+        if end <= start:
+            continue
+
+        score = max(float(cluster["score"]), max(float(item.get("score", 0.0)) for item in cluster["sources"]))
+        assembled_clips.append([start, end, score])
+        cluster_details.append(
+            {
+                "cluster_index": cluster_index,
+                "start_index": start_index,
+                "end_index": end_index,
+                "start": start,
+                "end": end,
+                "score": score,
+                "source_count": len(cluster["sources"]),
+                "sources": [dict(item) for item in cluster["sources"]],
+            }
+        )
+
+    deduped_clips: List[List[float]] = []
+    deduped_details: List[Dict[str, Any]] = []
+    seen: set[Tuple[float, float]] = set()
+    for clip, details in sorted(
+        zip(assembled_clips, cluster_details),
+        key=lambda item: (item[0][0], item[0][1], -item[0][2]),
+    ):
+        key = (round(float(clip[0]), 3), round(float(clip[1]), 3))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_clips.append(clip)
+        deduped_details.append(details)
+
+    return deduped_clips, deduped_details
 
 
 def merge_segments(segment_list: Sequence[Sequence[Sequence[float]]], tolerance_seconds: float) -> List[List[float]]:

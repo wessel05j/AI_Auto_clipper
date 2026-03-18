@@ -176,7 +176,7 @@ class Dashboard:
             )
         pipeline_table.add_row("AI Loops", str(int(self.config["clipping"].get("ai_loops", 1))))
         pipeline_table.add_row(
-            "Merge Distance",
+            "Assembly Gap",
             f"{int(self.config['clipping'].get('merge_distance_seconds', 20))}s",
         )
 
@@ -631,7 +631,7 @@ class Dashboard:
                         "[bold cyan]1.[/bold cyan] Ollama Model\n"
                         "[bold cyan]2.[/bold cyan] Whisper Model\n"
                         "[bold cyan]3.[/bold cyan] User Query (Editor)\n"
-                        "[bold cyan]4.[/bold cyan] Merge Distance\n"
+                        "[bold cyan]4.[/bold cyan] Assembly Gap\n"
                         "[bold cyan]5.[/bold cyan] AI Loops\n"
                         "[bold cyan]6.[/bold cyan] Temperature\n"
                         "[bold cyan]7.[/bold cyan] Output Directory\n"
@@ -719,7 +719,7 @@ class Dashboard:
                     recalc_tokens = True
             elif choice == "4":
                 self.config["clipping"]["merge_distance_seconds"] = IntPrompt.ask(
-                    "Merge distance (seconds)",
+                    "Assembly gap (seconds)",
                     default=int(self.config["clipping"]["merge_distance_seconds"]),
                 )
             elif choice == "5":
@@ -939,8 +939,8 @@ class Dashboard:
             "How many AI clipping scans run per chunk. Increasing this can recover more candidates but increases runtime and total model calls.",
         )
         settings.add_row(
-            "Merge Distance",
-            "Max seconds between nearby candidates before they are merged. Higher values create longer merged clips; lower values keep clips tighter and more separated.",
+            "Assembly Gap",
+            "Soft upper bound used when grouping nearby AI-selected anchors. Higher values can widen continuous clips, but the system now still requires contiguous speech instead of blindly merging by time gap.",
         )
         settings.add_row(
             "Temperature",
